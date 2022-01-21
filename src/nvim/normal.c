@@ -229,7 +229,7 @@ static const struct nv_cmd {
   { 'N',       nv_next,        0,                      SEARCH_REV },
   { 'O',       nv_open,        0,                      0 },
   { 'P',       nv_put,         0,                      0 },
-  { 'Q',       nv_exmode,      NV_NCW,                 0 },
+  { 'Q',       nv_regreplay, 0,                      0 },
   { 'R',       nv_Replace,     0,                      false },
   { 'S',       nv_subst,       NV_KEEPREG,             0 },
   { 'T',       nv_csearch,     NV_NCH_ALW|NV_LANG,     BACKWARD },
@@ -334,6 +334,7 @@ static const struct nv_cmd {
   { K_SELECT,  nv_select,      0,                      0 },
   { K_EVENT,   nv_event,       NV_KEEPREG,             0 },
   { K_COMMAND, nv_colon,       0,                      0 },
+  { K_LUA, nv_colon,           0,                      0 },
 };
 
 // Number of commands in nv_cmds[].
@@ -4028,33 +4029,37 @@ dozet:
 /*
  * "Q" command.
  */
-static void nv_exmode(cmdarg_T *cap)
+static void nv_regreplay(cmdarg_T *cap)
 {
-  /*
-   * Ignore 'Q' in Visual mode, just give a beep.
-   */
-  if (VIsual_active) {
-    vim_beep(BO_EX);
-  } else if (!checkclearop(cap->oap)) {
-    do_exmode();
+  if (checkclearop(cap->oap)) {
+    return;
+  }
+
+  while (cap->count1-- && !got_int) {
+    if (do_execreg(reg_recorded, false, false, false) == false) {
+      clearopbeep(cap->oap);
+      break;
+    }
+    line_breakcheck();
   }
 }
 
-/// Handle a ":" command and <Cmd>.
+/// Handle a ":" command and <Cmd> or Lua keymaps.
 static void nv_colon(cmdarg_T *cap)
 {
   int old_p_im;
   bool cmd_result;
   bool is_cmdkey = cap->cmdchar == K_COMMAND;
+  bool is_lua = cap->cmdchar == K_LUA;
 
-  if (VIsual_active && !is_cmdkey) {
+  if (VIsual_active && !is_cmdkey && !is_lua) {
     nv_operator(cap);
   } else {
     if (cap->oap->op_type != OP_NOP) {
       // Using ":" as a movement is charwise exclusive.
       cap->oap->motion_type = kMTCharWise;
       cap->oap->inclusive = false;
-    } else if (cap->count0 && !is_cmdkey) {
+    } else if (cap->count0 && !is_cmdkey && !is_lua) {
       // translate "count:" into ":.,.+(count - 1)"
       stuffcharReadbuff('.');
       if (cap->count0 > 1) {
@@ -4070,9 +4075,13 @@ static void nv_colon(cmdarg_T *cap)
 
     old_p_im = p_im;
 
+    if (is_lua) {
+      cmd_result = map_execute_lua();
+    } else {
     // get a command line and execute it
-    cmd_result = do_cmdline(NULL, is_cmdkey ? getcmdkeycmd : getexline, NULL,
-                            cap->oap->op_type != OP_NOP ? DOCMD_KEEPLINE : 0);
+      cmd_result = do_cmdline(NULL, is_cmdkey ? getcmdkeycmd : getexline, NULL,
+                              cap->oap->op_type != OP_NOP ? DOCMD_KEEPLINE : 0);
+    }
 
     // If 'insertmode' changed, enter or exit Insert mode
     if (p_im != old_p_im) {
@@ -4428,11 +4437,7 @@ static void nv_ident(cmdarg_T *cap)
       // Start insert mode in terminal buffer
       restart_edit = 'i';
 
-      add_map((char_u *)"<buffer> <esc> <Cmd>call jobstop(&channel)<CR>", TERM_FOCUS, true);
-      do_cmdline_cmd("autocmd TermClose <buffer> "
-                     " if !v:event.status |"
-                     "   exec 'bdelete! ' .. expand('<abuf>') |"
-                     " endif");
+      add_map((char_u *)"<buffer> <esc> <Cmd>bdelete!<CR>", TERM_FOCUS, true);
     }
   }
 

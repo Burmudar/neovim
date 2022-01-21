@@ -30,6 +30,7 @@
 #include "nvim/lua/stdlib.h"
 #include "nvim/lua/treesitter.h"
 #include "nvim/lua/xdiff.h"
+#include "nvim/lua/spell.h"
 #include "nvim/macros.h"
 #include "nvim/map.h"
 #include "nvim/memline.h"
@@ -230,8 +231,8 @@ static int nlua_str_utf_start(lua_State *const lstate) FUNC_ATTR_NONNULL_ALL
   if (offset < 0 || offset > (intptr_t)s1_len) {
     return luaL_error(lstate, "index out of range");
   }
-  int tail_offset = mb_head_off((char_u *)s1, (char_u *)s1 + (char_u)offset - 1);
-  lua_pushinteger(lstate, tail_offset);
+  int head_offset = mb_head_off((char_u *)s1, (char_u *)s1 + offset - 1);
+  lua_pushinteger(lstate, head_offset);
   return 1;
 }
 
@@ -250,7 +251,7 @@ static int nlua_str_utf_end(lua_State *const lstate) FUNC_ATTR_NONNULL_ALL
   if (offset < 0 || offset > (intptr_t)s1_len) {
     return luaL_error(lstate, "index out of range");
   }
-  int tail_offset = mb_tail_off((char_u *)s1, (char_u *)s1 + (char_u)offset - 1);
+  int tail_offset = mb_tail_off((char_u *)s1, (char_u *)s1 + offset - 1);
   lua_pushinteger(lstate, tail_offset);
   return 1;
 }
@@ -517,6 +518,10 @@ void nlua_state_add_stdlib(lua_State *const lstate)
   // vim.diff
   lua_pushcfunction(lstate, &nlua_xdl_diff);
   lua_setfield(lstate, -2, "diff");
+
+  // vim.spell
+  luaopen_spell(lstate);
+  lua_setfield(lstate, -2, "spell");
 
   lua_cjson_new(lstate);
   lua_setfield(lstate, -2, "json");

@@ -657,7 +657,8 @@ static int qf_get_next_str_line(qfstate_T *state)
     state->linebuf = IObuff;
     state->linelen = len;
   }
-  STRLCPY(state->linebuf, p_str, state->linelen + 1);
+  memcpy(state->linebuf, p_str, state->linelen);
+  state->linebuf[state->linelen] = '\0';
 
   // Increment using len in order to discard the rest of the line if it
   // exceeds LINE_MAXLEN.
@@ -3946,7 +3947,7 @@ static int qf_buf_add_line(qf_list_T *qfl, buf_T *buf, linenr_T lnum, const qfli
   int len;
   buf_T *errbuf;
 
-  // If the 'quickfixtextfunc' function returned an non-empty custom string
+  // If the 'quickfixtextfunc' function returned a non-empty custom string
   // for this entry, then use it.
   if (qftf_str != NULL && *qftf_str != NUL) {
     STRLCPY(IObuff, qftf_str, IOSIZE);

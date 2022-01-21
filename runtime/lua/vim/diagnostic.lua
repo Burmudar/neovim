@@ -30,7 +30,7 @@ M.handlers = setmetatable({}, {
   __newindex = function(t, name, handler)
     vim.validate { handler = {handler, "t" } }
     rawset(t, name, handler)
-    if not global_diagnostic_options[name] then
+    if global_diagnostic_options[name] == nil then
       global_diagnostic_options[name] = true
     end
   end,
@@ -91,23 +91,22 @@ local function filter_by_severity(severity, diagnostics)
 end
 
 ---@private
-local function prefix_source(source, diagnostics)
-  vim.validate { source = {source, function(v)
-    return v == "always" or v == "if_many"
-  end, "'always' or 'if_many'" } }
-
-  if source == "if_many" then
-    local sources = {}
-    for _, d in pairs(diagnostics) do
-      if d.source then
-        sources[d.source] = true
+local function count_sources(bufnr)
+  local seen = {}
+  local count = 0
+  for _, namespace_diagnostics in pairs(diagnostic_cache[bufnr]) do
+    for _, diagnostic in ipairs(namespace_diagnostics) do
+      if diagnostic.source and not seen[diagnostic.source] then
+        seen[diagnostic.source] = true
+        count = count + 1
       end
     end
-    if #vim.tbl_keys(sources) <= 1 then
-      return diagnostics
-    end
   end
+  return count
+end
 
+---@private
+local function prefix_source(diagnostics)
   return vim.tbl_map(function(d)
     if not d.source then
       return d
@@ -272,6 +271,8 @@ end
 ---@private
 local function set_diagnostic_cache(namespace, bufnr, diagnostics)
   for _, diagnostic in ipairs(diagnostics) do
+    assert(diagnostic.lnum, "Diagnostic line number is required")
+    assert(diagnostic.col, "Diagnostic column is required")
     diagnostic.severity = diagnostic.severity and to_severity(diagnostic.severity) or M.severity.ERROR
     diagnostic.end_lnum = diagnostic.end_lnum or diagnostic.lnum
     diagnostic.end_col = diagnostic.end_col or diagnostic.col
@@ -297,11 +298,6 @@ local function restore_extmarks(bufnr, last)
       if not found[extmark[1]] then
         local opts = extmark[4]
         opts.id = extmark[1]
-        -- HACK: end_row should be end_line
-        if opts.end_row then
-          opts.end_line = opts.end_row
-          opts.end_row = nil
-        end
         pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, extmark[2], extmark[3], opts)
       end
     end
@@ -556,15 +552,24 @@ end
 ---         - `table`: Enable this feature with overrides. Use an empty table to use default values.
 ---         - `function`: Function with signature (namespace, bufnr) that returns any of the above.
 ---
----@param opts table Configuration table with the following keys:
+---@param opts table|nil When omitted or "nil", retrieve the current configuration. Otherwise, a
+---                      configuration table with the following keys:
 ---       - underline: (default true) Use underline for diagnostics. Options:
 ---                    * severity: Only underline diagnostics matching the given severity
 ---                    |diagnostic-severity|
----       - virtual_text: (default true) Use virtual text for diagnostics. Options:
+---       - virtual_text: (default true) Use virtual text for diagnostics. If multiple diagnostics
+---                       are set for a namespace, one prefix per diagnostic + the last diagnostic
+---                       message are shown.
+---                       Options:
 ---                       * severity: Only show virtual text for diagnostics matching the given
 ---                       severity |diagnostic-severity|
----                       * source: (string) Include the diagnostic source in virtual
----                       text. One of "always" or "if_many".
+---                       * source: (boolean or string) Include the diagnostic source in virtual
+---                                 text. Use "if_many" to only show sources if there is more than
+---                                 one diagnostic source in the buffer. Otherwise, any truthy value
+---                                 means to always show the diagnostic source.
+---                       * spacing: (number) Amount of empty spaces inserted at the beginning
+---                                  of the virtual text.
+---                       * prefix: (string) Prepend diagnostic message with prefix.
 ---                       * format: (function) A function that takes a diagnostic as input and
 ---                                 returns a string. The return value is the text used to display
 ---                                 the diagnostic. Example:
@@ -595,7 +600,7 @@ end
 ---                            global diagnostic options.
 function M.config(opts, namespace)
   vim.validate {
-    opts = { opts, 't' },
+    opts = { opts, 't', true },
     namespace = { namespace, 'n', true },
   }
 
@@ -607,10 +612,13 @@ function M.config(opts, namespace)
     t = global_diagnostic_options
   end
 
-  for opt in pairs(global_diagnostic_options) do
-    if opts[opt] ~= nil then
-      t[opt] = opts[opt]
-    end
+  if not opts then
+    -- Return current config
+    return vim.deepcopy(t)
+  end
+
+  for k, v in pairs(opts) do
+    t[k] = v
   end
 
   if namespace then
@@ -640,7 +648,11 @@ function M.set(namespace, bufnr, diagnostics, opts)
   vim.validate {
     namespace = {namespace, 'n'},
     bufnr = {bufnr, 'n'},
-    diagnostics = {diagnostics, 't'},
+    diagnostics = {
+      diagnostics,
+      vim.tbl_islist,
+      "a list of diagnostics",
+    },
     opts = {opts, 't', true},
   }
 
@@ -806,11 +818,16 @@ M.handlers.signs = {
     vim.validate {
       namespace = {namespace, 'n'},
       bufnr = {bufnr, 'n'},
-      diagnostics = {diagnostics, 't'},
+      diagnostics = {
+        diagnostics,
+        vim.tbl_islist,
+        "a list of diagnostics",
+      },
       opts = {opts, 't', true},
     }
 
     bufnr = get_bufnr(bufnr)
+    opts = opts or {}
 
     if opts.signs and opts.signs.severity then
       diagnostics = filter_by_severity(opts.signs.severity, diagnostics)
@@ -869,11 +886,16 @@ M.handlers.underline = {
     vim.validate {
       namespace = {namespace, 'n'},
       bufnr = {bufnr, 'n'},
-      diagnostics = {diagnostics, 't'},
+      diagnostics = {
+        diagnostics,
+        vim.tbl_islist,
+        "a list of diagnostics",
+      },
       opts = {opts, 't', true},
     }
 
     bufnr = get_bufnr(bufnr)
+    opts = opts or {}
 
     if opts.underline and opts.underline.severity then
       diagnostics = filter_by_severity(opts.underline.severity, diagnostics)
@@ -917,19 +939,27 @@ M.handlers.virtual_text = {
     vim.validate {
       namespace = {namespace, 'n'},
       bufnr = {bufnr, 'n'},
-      diagnostics = {diagnostics, 't'},
+      diagnostics = {
+        diagnostics,
+        vim.tbl_islist,
+        "a list of diagnostics",
+      },
       opts = {opts, 't', true},
     }
 
     bufnr = get_bufnr(bufnr)
+    opts = opts or {}
 
     local severity
     if opts.virtual_text then
       if opts.virtual_text.format then
         diagnostics = reformat_diagnostics(opts.virtual_text.format, diagnostics)
       end
-      if opts.virtual_text.source then
-        diagnostics = prefix_source(opts.virtual_text.source, diagnostics)
+      if
+        opts.virtual_text.source
+        and (opts.virtual_text.source ~= "if_many" or count_sources(bufnr) > 1)
+      then
+        diagnostics = prefix_source(diagnostics)
       end
       if opts.virtual_text.severity then
         severity = opts.virtual_text.severity
@@ -1074,7 +1104,11 @@ function M.show(namespace, bufnr, diagnostics, opts)
   vim.validate {
     namespace = { namespace, 'n', true },
     bufnr = { bufnr, 'n', true },
-    diagnostics = { diagnostics, 't', true },
+    diagnostics = {
+      diagnostics,
+      function(v) return v == nil or vim.tbl_islist(v) end,
+      "a list of diagnostics",
+    },
     opts = { opts, 't', true },
   }
 
@@ -1154,8 +1188,11 @@ end
 ---            - header: (string or table) String to use as the header for the floating window. If a
 ---                      table, it is interpreted as a [text, hl_group] tuple. Overrides the setting
 ---                      from |vim.diagnostic.config()|.
----            - source: (string) Include the diagnostic source in the message. One of "always" or
----                      "if_many". Overrides the setting from |vim.diagnostic.config()|.
+---            - source: (boolean or string) Include the diagnostic source in the message.
+---                      Use "if_many" to only show sources if there is more than one source of
+---                      diagnostics in the buffer. Otherwise, any truthy value means to always show
+---                      the diagnostic source. Overrides the setting from
+---                      |vim.diagnostic.config()|.
 ---            - format: (function) A function that takes a diagnostic as input and returns a
 ---                      string. The return value is the text used to display the diagnostic.
 ---                      Overrides the setting from |vim.diagnostic.config()|.
@@ -1267,8 +1304,8 @@ function M.open_float(opts, ...)
     diagnostics = reformat_diagnostics(opts.format, diagnostics)
   end
 
-  if opts.source then
-    diagnostics = prefix_source(opts.source, diagnostics)
+  if opts.source and (opts.source ~= "if_many" or count_sources(bufnr) > 1) then
+    diagnostics = prefix_source(diagnostics)
   end
 
   local prefix_opt = if_nil(opts.prefix, (scope == "cursor" and #diagnostics <= 1) and "" or function(_, i)
@@ -1342,16 +1379,16 @@ function M.reset(namespace, bufnr)
       diagnostic_cache[iter_bufnr][iter_namespace] = nil
       M.hide(iter_namespace, iter_bufnr)
     end
-  end
 
-  vim.api.nvim_buf_call(bufnr, function()
-    vim.api.nvim_command(
-      string.format(
-        "doautocmd <nomodeline> DiagnosticChanged %s",
-        vim.fn.fnameescape(vim.api.nvim_buf_get_name(bufnr))
+    vim.api.nvim_buf_call(iter_bufnr, function()
+      vim.api.nvim_command(
+        string.format(
+          "doautocmd <nomodeline> DiagnosticChanged %s",
+          vim.fn.fnameescape(vim.api.nvim_buf_get_name(iter_bufnr))
+        )
       )
-    )
-  end)
+    end)
+  end
 end
 
 --- Add all diagnostics to the quickfix list.
@@ -1516,7 +1553,13 @@ local errlist_type_map = {
 ---@param diagnostics table List of diagnostics |diagnostic-structure|.
 ---@return array of quickfix list items |setqflist-what|
 function M.toqflist(diagnostics)
-  vim.validate { diagnostics = {diagnostics, 't'} }
+  vim.validate {
+    diagnostics = {
+      diagnostics,
+      vim.tbl_islist,
+      "a list of diagnostics",
+    },
+  }
 
   local list = {}
   for _, v in ipairs(diagnostics) do
@@ -1547,7 +1590,13 @@ end
 ---            |getloclist()|.
 ---@return array of diagnostics |diagnostic-structure|
 function M.fromqflist(list)
-  vim.validate { list = {list, 't'} }
+  vim.validate {
+    list = {
+      list,
+      vim.tbl_islist,
+      "a list of quickfix items",
+    },
+  }
 
   local diagnostics = {}
   for _, item in ipairs(list) do

@@ -1,7 +1,7 @@
 " Vim functions for file type detection
 "
 " Maintainer:	Bram Moolenaar <Bram@vim.org>
-" Last Change:	2021 Nov 27
+" Last Change:	2022 Jan 11
 
 " These functions are moved here from runtime/filetype.vim to make startup
 " faster.
@@ -811,6 +811,40 @@ func dist#ft#Redif()
   endwhile
 endfunc
 
+" This function is called for all files under */debian/patches/*, make sure not
+" to non-dep3patch files, such as README and other text files.
+func dist#ft#Dep3patch()
+  if expand('%:t') ==# 'series'
+    return
+  endif
+
+  for ln in getline(1, 100)
+    if ln =~# '^\%(Description\|Subject\|Origin\|Bug\|Forwarded\|Author\|From\|Reviewed-by\|Acked-by\|Last-Updated\|Applied-Upstream\):'
+      setf dep3patch
+      return
+    elseif ln =~# '^---'
+      " end of headers found. stop processing
+      return
+    endif
+  endfor
+endfunc
+
+" This function checks the first 15 lines for appearance of 'FoamFile'
+" and then 'object' in a following line.
+" In that case, it's probably an OpenFOAM file
+func dist#ft#FTfoam()
+    let ffile = 0
+    let lnum = 1
+    while lnum <= 15
+      if getline(lnum) =~# '^FoamFile'
+	let ffile = 1
+      elseif ffile == 1 && getline(lnum) =~# '^\s*object'
+	setf foam
+	return
+      endif
+      let lnum = lnum + 1
+    endwhile
+endfunc
 
 " Restore 'cpoptions'
 let &cpo = s:cpo_save

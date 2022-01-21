@@ -607,7 +607,7 @@ char_u *vim_findfile(void *search_ctx_arg)
   for (;;) {
     // downward search loop
     for (;;) {
-      // check if user user wants to stop the search
+      // check if user wants to stop the search
       os_breakcheck();
       if (got_int) {
         break;
@@ -1139,7 +1139,7 @@ static int ff_check_visited(ff_visited_T **visited_list, char_u *fname, char_u *
   bool url = false;
 
   FileID file_id;
-  // For an URL we only compare the name, otherwise we compare the
+  // For a URL we only compare the name, otherwise we compare the
   // device/inode.
   if (path_with_url((char *)fname)) {
     STRLCPY(ff_expand_buffer, fname, MAXPATHL);
@@ -1667,12 +1667,17 @@ int vim_chdirfile(char_u *fname, CdCause cause)
     NameBuff[0] = NUL;
   }
 
-  if (os_chdir(dir) == 0) {
-    if (cause != kCdCauseOther && pathcmp(dir, (char *)NameBuff, -1) != 0) {
-      do_autocmd_dirchanged(dir, kCdScopeWindow, cause);
-    }
-  } else {
+  if (pathcmp(dir, (char *)NameBuff, -1) == 0) {
+    // nothing to do
+    return OK;
+  }
+
+  if (os_chdir(dir) != 0) {
     return FAIL;
+  }
+
+  if (cause != kCdCauseOther) {
+    do_autocmd_dirchanged(dir, kCdScopeWindow, cause);
   }
 
   return OK;

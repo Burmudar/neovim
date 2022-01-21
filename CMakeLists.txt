@@ -408,6 +408,19 @@ main(void)
 if(TS_HAS_SET_MATCH_LIMIT)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DNVIM_TS_HAS_SET_MATCH_LIMIT")
 endif()
+check_c_source_compiles("
+#include <stdlib.h>
+#include <tree_sitter/api.h>
+int
+main(void)
+{
+  ts_set_allocator(malloc, calloc, realloc, free);
+  return 0;
+}
+" TS_HAS_SET_ALLOCATOR)
+if(TS_HAS_SET_ALLOCATOR)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DNVIM_TS_HAS_SET_ALLOCATOR")
+endif()
 
 # Note: The test lib requires LuaJIT; it will be skipped if LuaJIT is missing.
 option(PREFER_LUA "Prefer Lua over LuaJIT in the nvim executable." OFF)
@@ -542,6 +555,33 @@ if(NOT LUA_PRG_WORKS)
 endif()
 
 message(STATUS "Using Lua interpreter: ${LUA_PRG}")
+
+if(DEBUG)
+  option(COMPILE_LUA "Pre-compile Lua sources into bytecode (for sources that are included in the binary)" OFF)
+else()
+  option(COMPILE_LUA "Pre-compile Lua sources into bytecode (for sources that are included in the binary)" ON)
+endif()
+
+if(COMPILE_LUA AND NOT WIN32)
+  if(PREFER_LUA)
+    foreach(CURRENT_LUAC_PRG luac5.1 luac)
+      find_program(_CHECK_LUAC_PRG ${CURRENT_LUAC_PRG})
+      if(_CHECK_LUAC_PRG)
+        set(LUAC_PRG "${_CHECK_LUAC_PRG} -s -o - %s" CACHE STRING "Format for compiling to Lua bytecode")
+        break()
+      endif()
+    endforeach()
+  elseif(LUA_PRG MATCHES "luajit")
+    check_lua_module(${LUA_PRG} "jit.bcsave" LUAJIT_HAS_JIT_BCSAVE)
+    if(LUAJIT_HAS_JIT_BCSAVE)
+      set(LUAC_PRG "${LUA_PRG} -b -s %s -" CACHE STRING "Format for compiling to Lua bytecode")
+    endif()
+  endif()
+endif()
+
+if(LUAC_PRG)
+  message(STATUS "Using Lua compiler: ${LUAC_PRG}")
+endif()
 
 # Setup busted.
 find_program(BUSTED_PRG NAMES busted busted.bat)
