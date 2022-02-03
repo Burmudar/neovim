@@ -19,6 +19,7 @@
 #include "nvim/ascii.h"
 #include "nvim/buffer.h"
 #include "nvim/buffer_defs.h"
+#include "nvim/charset.h"
 #include "nvim/context.h"
 #include "nvim/decoration.h"
 #include "nvim/edit.h"
@@ -31,6 +32,7 @@
 #include "nvim/fileio.h"
 #include "nvim/getchar.h"
 #include "nvim/highlight.h"
+#include "nvim/highlight_defs.h"
 #include "nvim/lua/executor.h"
 #include "nvim/mark.h"
 #include "nvim/memline.h"
@@ -121,7 +123,9 @@ Dictionary nvim__get_hl_defs(Integer ns_id, Error *err)
 
 /// Set a highlight group.
 ///
-/// @param ns_id number of namespace for this highlight
+/// @param ns_id number of namespace for this highlight. Use value 0
+///              to set a highlight group in the global (`:highlight`)
+///              namespace.
 /// @param name highlight group name, like ErrorMsg
 /// @param val highlight definition map, like |nvim_get_hl_by_name|.
 ///            in addition the following keys are also recognized:
@@ -135,18 +139,23 @@ Dictionary nvim__get_hl_defs(Integer ns_id, Error *err)
 ///                               same as attributes of gui color
 /// @param[out] err Error details, if any
 ///
-/// TODO: ns_id = 0, should modify :highlight namespace
-/// TODO val should take update vs reset flag
+// TODO(bfredl): val should take update vs reset flag
 void nvim_set_hl(Integer ns_id, String name, Dictionary val, Error *err)
   FUNC_API_SINCE(7)
 {
   int hl_id = syn_check_group(name.data, (int)name.size);
   int link_id = -1;
 
-  HlAttrs attrs = dict2hlattrs(val, true, &link_id, err);
-  if (!ERROR_SET(err)) {
-    ns_hl_def((NS)ns_id, hl_id, attrs, link_id);
+  HlAttrNames *names = NULL;  // Only used when setting global namespace
+  if (ns_id == 0) {
+    names = xmalloc(sizeof(*names));
+    *names = HLATTRNAMES_INIT;
   }
+  HlAttrs attrs = dict2hlattrs(val, true, &link_id, names, err);
+  if (!ERROR_SET(err)) {
+    ns_hl_def((NS)ns_id, hl_id, attrs, link_id, names);
+  }
+  xfree(names);
 }
 
 /// Set active namespace for highlights.
@@ -187,21 +196,23 @@ static void on_redraw_event(void **argv)
 /// On execution error: does not fail, but updates v:errmsg.
 ///
 /// To input sequences like <C-o> use |nvim_replace_termcodes()| (typically
-/// with escape_csi=true) to replace |keycodes|, then pass the result to
+/// with escape_ks=false) to replace |keycodes|, then pass the result to
 /// nvim_feedkeys().
 ///
 /// Example:
 /// <pre>
 ///     :let key = nvim_replace_termcodes("<C-o>", v:true, v:false, v:true)
-///     :call nvim_feedkeys(key, 'n', v:true)
+///     :call nvim_feedkeys(key, 'n', v:false)
 /// </pre>
 ///
 /// @param keys         to be typed
 /// @param mode         behavior flags, see |feedkeys()|
-/// @param escape_csi   If true, escape K_SPECIAL/CSI bytes in `keys`
+/// @param escape_ks    If true, escape K_SPECIAL bytes in `keys`
+///                     This should be false if you already used
+///                     |nvim_replace_termcodes()|, and true otherwise.
 /// @see feedkeys()
-/// @see vim_strsave_escape_csi
-void nvim_feedkeys(String keys, String mode, Boolean escape_csi)
+/// @see vim_strsave_escape_ks
+void nvim_feedkeys(String keys, String mode, Boolean escape_ks)
   FUNC_API_SINCE(1)
 {
   bool remap = true;
@@ -232,10 +243,10 @@ void nvim_feedkeys(String keys, String mode, Boolean escape_csi)
   }
 
   char *keys_esc;
-  if (escape_csi) {
-    // Need to escape K_SPECIAL and CSI before putting the string in the
+  if (escape_ks) {
+    // Need to escape K_SPECIAL before putting the string in the
     // typeahead buffer.
-    keys_esc = (char *)vim_strsave_escape_csi((char_u *)keys.data);
+    keys_esc = (char *)vim_strsave_escape_ks((char_u *)keys.data);
   } else {
     keys_esc = keys.data;
   }
@@ -245,7 +256,7 @@ void nvim_feedkeys(String keys, String mode, Boolean escape_csi)
     typebuf_was_filled = true;
   }
 
-  if (escape_csi) {
+  if (escape_ks) {
     xfree(keys_esc);
   }
 
@@ -2234,7 +2245,7 @@ Dictionary nvim_eval_statusline(String str, Dict(eval_statusline) *opts, Error *
   Dictionary result = ARRAY_DICT_INIT;
 
   int maxwidth;
-  char fillchar = 0;
+  int fillchar = 0;
   Window window = 0;
   bool use_tabline = false;
   bool highlights = false;
@@ -2249,12 +2260,12 @@ Dictionary nvim_eval_statusline(String str, Dict(eval_statusline) *opts, Error *
   }
 
   if (HAS_KEY(opts->fillchar)) {
-    if (opts->fillchar.type != kObjectTypeString || opts->fillchar.data.string.size > 1) {
-      api_set_error(err, kErrorTypeValidation, "fillchar must be an ASCII character");
+    if (opts->fillchar.type != kObjectTypeString || opts->fillchar.data.string.size == 0
+        || char2cells(fillchar = utf_ptr2char((char_u *)opts->fillchar.data.string.data)) != 1
+        || (size_t)utf_char2len(fillchar) != opts->fillchar.data.string.size) {
+      api_set_error(err, kErrorTypeValidation, "fillchar must be a single-width character");
       return result;
     }
-
-    fillchar = opts->fillchar.data.string.data[0];
   }
 
   if (HAS_KEY(opts->highlights)) {
@@ -2281,11 +2292,16 @@ Dictionary nvim_eval_statusline(String str, Dict(eval_statusline) *opts, Error *
     fillchar = ' ';
   } else {
     wp = find_window_by_handle(window, err);
+
+    if (wp == NULL) {
+      api_set_error(err, kErrorTypeException, "unknown winid %d", window);
+      return result;
+    }
     ewp = wp;
 
     if (fillchar == 0) {
       int attr;
-      fillchar = (char)fillchar_status(&attr, wp);
+      fillchar = fillchar_status(&attr, wp);
     }
   }
 
@@ -2313,7 +2329,7 @@ Dictionary nvim_eval_statusline(String str, Dict(eval_statusline) *opts, Error *
                                sizeof(buf),
                                (char_u *)str.data,
                                false,
-                               (char_u)fillchar,
+                               fillchar,
                                maxwidth,
                                hltab_ptr,
                                NULL);

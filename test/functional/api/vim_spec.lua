@@ -1367,18 +1367,18 @@ describe('API', function()
   end)
 
   describe('nvim_feedkeys', function()
-    it('CSI escaping', function()
+    it('K_SPECIAL escaping', function()
       local function on_setup()
         -- notice the special char(…) \xe2\80\xa6
         nvim('feedkeys', ':let x1="…"\n', '', true)
 
         -- Both nvim_replace_termcodes and nvim_feedkeys escape \x80
         local inp = helpers.nvim('replace_termcodes', ':let x2="…"<CR>', true, true, true)
-        nvim('feedkeys', inp, '', true)   -- escape_csi=true
+        nvim('feedkeys', inp, '', true)   -- escape_ks=true
 
-        -- nvim_feedkeys with CSI escaping disabled
+        -- nvim_feedkeys with K_SPECIAL escaping disabled
         inp = helpers.nvim('replace_termcodes', ':let x3="…"<CR>', true, true, true)
-        nvim('feedkeys', inp, '', false)  -- escape_csi=false
+        nvim('feedkeys', inp, '', false)  -- escape_ks=false
 
         helpers.stop()
       end
@@ -2550,6 +2550,34 @@ describe('API', function()
         meths.eval_statusline(
           'Should be truncated%<',
           { maxwidth = 15 }))
+    end)
+    it('supports ASCII fillchar', function()
+      eq({ str = 'a~~~b', width = 5 },
+         meths.eval_statusline('a%=b', { fillchar = '~', maxwidth = 5 }))
+    end)
+    it('supports single-width multibyte fillchar', function()
+      eq({ str = 'a━━━b', width = 5 },
+         meths.eval_statusline('a%=b', { fillchar = '━', maxwidth = 5 }))
+    end)
+    it('rejects double-width fillchar', function()
+      eq('fillchar must be a single-width character',
+         pcall_err(meths.eval_statusline, '', { fillchar = '哦' }))
+    end)
+    it('rejects control character fillchar', function()
+      eq('fillchar must be a single-width character',
+         pcall_err(meths.eval_statusline, '', { fillchar = '\a' }))
+    end)
+    it('rejects multiple-character fillchar', function()
+      eq('fillchar must be a single-width character',
+         pcall_err(meths.eval_statusline, '', { fillchar = 'aa' }))
+    end)
+    it('rejects empty string fillchar', function()
+      eq('fillchar must be a single-width character',
+         pcall_err(meths.eval_statusline, '', { fillchar = '' }))
+    end)
+    it('rejects non-string fillchar', function()
+      eq('fillchar must be a single-width character',
+         pcall_err(meths.eval_statusline, '', { fillchar = 1 }))
     end)
     describe('highlight parsing', function()
       it('works', function()

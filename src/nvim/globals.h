@@ -127,7 +127,7 @@ typedef off_t off_T;
 
 // When vgetc() is called, it sets mod_mask to the set of modifiers that are
 // held down based on the MOD_MASK_* symbols that are read first.
-EXTERN int mod_mask INIT(= 0x0);  // current key modifiers
+EXTERN int mod_mask INIT(= 0);  // current key modifiers
 
 
 // Cmdline_row is the row where the command line starts, just below the
@@ -524,6 +524,8 @@ EXTERN pos_T VIsual;
 EXTERN int VIsual_active INIT(= false);
 /// Whether Select mode is active.
 EXTERN int VIsual_select INIT(= false);
+/// Register name for Select mode
+EXTERN int VIsual_select_reg INIT(= 0);
 /// Restart Select mode when next cmd finished
 EXTERN int restart_VIsual_select INIT(= 0);
 /// Whether to restart the selection after a Select-mode mapping or menu.

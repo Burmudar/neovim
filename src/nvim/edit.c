@@ -260,7 +260,7 @@ static colnr_T Insstart_blank_vcol;     // vcol for first inserted blank
 static bool update_Insstart_orig = true;  // set Insstart_orig to Insstart
 
 static char_u *last_insert = NULL;    // the text of the previous insert,
-                                      // K_SPECIAL and CSI are escaped
+                                      // K_SPECIAL is escaped
 static int last_insert_skip;      // nr of chars in front of previous insert
 static int new_insert_skip;       // nr of chars in front of current insert
 static int did_restart_edit;            // "restart_edit" when calling edit()
@@ -663,8 +663,12 @@ static int insert_execute(VimState *state, int key)
   InsertState *const s = (InsertState *)state;
   if (stop_insert_mode) {
     // Insert mode ended, possibly from a callback.
+    if (key != K_IGNORE && key != K_NOP) {
+      vungetc(key);
+    }
     s->count = 0;
     s->nomove = true;
+    ins_compl_prep(ESC);
     return 0;
   }
 
@@ -909,7 +913,7 @@ static int insert_handle_key(InsertState *s)
     ins_ctrl_o();
 
     // don't move the cursor left when 'virtualedit' has "onemore".
-    if (ve_flags & VE_ONEMORE) {
+    if (get_ve_flags() & VE_ONEMORE) {
       ins_at_eol = false;
       s->nomove = true;
     }
@@ -1089,6 +1093,8 @@ check_pum:
     // equivalent to selecting the item with a typed key.
     if (pum_want.active) {
       if (pum_visible()) {
+        // Set this to NULL so that ins_complete() will update the message.
+        edit_submode_extra = NULL;
         insert_do_complete(s);
         if (pum_want.finish) {
           // accept the item and stop completion
@@ -5631,8 +5637,12 @@ int get_literal(void)
   i = 0;
   for (;;) {
     nc = plain_vgetc();
-    if (!(State & CMDLINE)
-        && MB_BYTE2LEN_CHECK(nc) == 1) {
+    if ((mod_mask & ~MOD_MASK_SHIFT) != 0) {
+      // A character with non-Shift modifiers should not be a valid
+      // character for i_CTRL-V_digit.
+      break;
+    }
+    if (!(State & CMDLINE) && MB_BYTE2LEN_CHECK(nc) == 1) {
       add_to_showcmd(nc);
     }
     if (nc == 'x' || nc == 'X') {
@@ -5698,6 +5708,8 @@ int get_literal(void)
   --no_mapping;
   if (nc) {
     vungetc(nc);
+    // A character typed with i_CTRL-V_digit cannot have modifiers.
+    mod_mask = 0;
   }
   got_int = false;          // CTRL-C typed after CTRL-V is not an interrupt
   return cc;
@@ -6009,6 +6021,7 @@ static void internal_format(int textwidth, int second_indent, int flags, int for
     char_u *saved_text = NULL;
     colnr_T col;
     colnr_T end_col;
+    bool did_do_comment = false;
 
     virtcol = get_nolist_virtcol()
               + char2cells(c != NUL ? c : gchar_cursor());
@@ -6124,8 +6137,7 @@ static void internal_format(int textwidth, int second_indent, int flags, int for
         if (curwin->w_cursor.col <= (colnr_T)wantcol) {
           break;
         }
-      } else if ((cc >= 0x100 || !utf_allow_break_before(cc))
-                 && fo_multibyte) {
+      } else if ((cc >= 0x100 || !utf_allow_break_before(cc)) && fo_multibyte) {
         int ncc;
         bool allow_break;
 
@@ -6282,9 +6294,16 @@ static void internal_format(int textwidth, int second_indent, int flags, int for
               + (fo_white_par ? OPENLINE_KEEPTRAIL : 0)
               + (do_comments ? OPENLINE_DO_COM : 0)
               + ((flags & INSCHAR_COM_LIST) ? OPENLINE_COM_LIST : 0),
-              ((flags & INSCHAR_COM_LIST) ? second_indent : old_indent));
+              ((flags & INSCHAR_COM_LIST) ? second_indent : old_indent),
+              &did_do_comment);
     if (!(flags & INSCHAR_COM_LIST)) {
       old_indent = 0;
+    }
+
+    // If a comment leader was inserted, may also do this on a following
+    // line.
+    if (did_do_comment) {
+      no_leader = false;
     }
 
     replace_offset = 0;
@@ -6817,7 +6836,7 @@ void free_last_insert(void)
 
 /// Add character "c" to buffer "s"
 ///
-/// Escapes the special meaning of K_SPECIAL and CSI, handles multi-byte
+/// Escapes the special meaning of K_SPECIAL, handles multi-byte
 /// characters.
 ///
 /// @param[in]  c  Character to add.
@@ -6831,7 +6850,7 @@ char_u *add_char2buf(int c, char_u *s)
   const int len = utf_char2bytes(c, temp);
   for (int i = 0; i < len; i++) {
     c = temp[i];
-    // Need to escape K_SPECIAL and CSI like in the typeahead buffer.
+    // Need to escape K_SPECIAL like in the typeahead buffer.
     if (c == K_SPECIAL) {
       *s++ = K_SPECIAL;
       *s++ = KS_SPECIAL;
@@ -6905,8 +6924,7 @@ int oneright(void)
 
   // move "l" bytes right, but don't end up on the NUL, unless 'virtualedit'
   // contains "onemore".
-  if (ptr[l] == NUL
-      && (ve_flags & VE_ONEMORE) == 0) {
+  if (ptr[l] == NUL && (get_ve_flags() & VE_ONEMORE) == 0) {
     return FAIL;
   }
   curwin->w_cursor.col += l;
@@ -7113,9 +7131,7 @@ int stuff_inserted(int c, long count, int no_esc)
     stuffReadbuff((const char *)ptr);
     // A trailing "0" is inserted as "<C-V>048", "^" as "<C-V>^".
     if (last) {
-      stuffReadbuff((last == '0'
-                     ? "\026\060\064\070"
-                     : "\026^"));
+      stuffReadbuff(last == '0' ? "\026\060\064\070" : "\026^");
     }
   } while (--count > 0);
 
@@ -8028,7 +8044,7 @@ static bool ins_esc(long *count, int cmdchar, bool nomove)
               && !VIsual_active
               ))
       && !revins_on) {
-    if (curwin->w_cursor.coladd > 0 || ve_flags == VE_ALL) {
+    if (curwin->w_cursor.coladd > 0 || get_ve_flags() == VE_ALL) {
       oneleft();
       if (restart_edit != NUL) {
         curwin->w_cursor.coladd++;
@@ -8281,6 +8297,7 @@ static bool ins_bs(int c, int mode, int *inserted_space_p)
   int in_indent;
   int oldState;
   int cpc[MAX_MCO];                 // composing characters
+  bool call_fix_indent = false;
 
   // can't delete anything in an empty file
   // can't backup past first character in buffer
@@ -8424,6 +8441,8 @@ static bool ins_bs(int c, int mode, int *inserted_space_p)
       beginline(BL_WHITE);
       if (curwin->w_cursor.col < save_col) {
         mincol = curwin->w_cursor.col;
+        // should now fix the indent to match with the previous line
+        call_fix_indent = true;
       }
       curwin->w_cursor.col = save_col;
     }
@@ -8558,6 +8577,11 @@ static bool ins_bs(int c, int mode, int *inserted_space_p)
   if (curwin->w_cursor.col <= 1) {
     did_ai = false;
   }
+
+  if (call_fix_indent) {
+    fix_indent();
+  }
+
   // It's a little strange to put backspaces into the redo
   // buffer, but it makes auto-indent a lot easier to deal
   // with.
@@ -9172,7 +9196,7 @@ static bool ins_eol(int c)
   AppendToRedobuff(NL_STR);
   bool i = open_line(FORWARD,
                      has_format_option(FO_RET_COMS) ? OPENLINE_DO_COM : 0,
-                     old_indent);
+                     old_indent, NULL);
   old_indent = 0;
   can_cindent = true;
   // When inserting a line the cursor line must never be in a closed fold.

@@ -1454,7 +1454,10 @@ void set_curbuf(buf_T *buf, int action)
     }
     if (bufref_valid(&prevbufref) && !aborting()) {
       win_T *previouswin = curwin;
-      if (prevbuf == curbuf) {
+      // Do not sync when in Insert mode and the buffer is open in
+      // another window, might be a timer doing something in another
+      // window.
+      if (prevbuf == curbuf && ((State & INSERT) == 0 || curbuf->b_nwindows <= 1)) {
         u_sync(false);
       }
       close_buffer(prevbuf == curwin->w_buffer ? curwin : NULL,
@@ -1896,10 +1899,8 @@ void free_buf_options(buf_T *buf, int free_p_ff)
   clear_string_option(&buf->b_p_flp);
   clear_string_option(&buf->b_p_isk);
   clear_string_option(&buf->b_p_vsts);
-  xfree(buf->b_p_vsts_nopaste);
-  buf->b_p_vsts_nopaste = NULL;
-  xfree(buf->b_p_vsts_array);
-  buf->b_p_vsts_array = NULL;
+  XFREE_CLEAR(buf->b_p_vsts_nopaste);
+  XFREE_CLEAR(buf->b_p_vsts_array);
   clear_string_option(&buf->b_p_vts);
   XFREE_CLEAR(buf->b_p_vts_array);
   clear_string_option(&buf->b_p_keymap);
@@ -3418,7 +3419,7 @@ typedef enum {
 ///
 /// @return The final width of the statusline
 int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use_sandbox,
-                     char_u fillchar, int maxwidth, stl_hlrec_t **hltab, StlClickRecord **tabtab)
+                     int fillchar, int maxwidth, stl_hlrec_t **hltab, StlClickRecord **tabtab)
 {
   static size_t stl_items_len = 20;  // Initial value, grows as needed.
   static stl_item_t *stl_items = NULL;
@@ -3461,9 +3462,6 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
 
   if (fillchar == 0) {
     fillchar = ' ';
-  } else if (utf_char2len(fillchar) > 1) {
-    // Can't handle a multi-byte fill character yet.
-    fillchar = '-';
   }
 
   // The cursor in windows other than the current one isn't always
@@ -3661,7 +3659,7 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
         out_p = out_p - n + 1;
         // Fill up space left over by half a double-wide char.
         while (++group_len < stl_items[stl_groupitems[groupdepth]].minwid) {
-          *out_p++ = fillchar;
+          MB_CHAR2BYTES(fillchar, out_p);
         }
         // }
 
@@ -3684,14 +3682,14 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
         if (min_group_width < 0) {
           min_group_width = 0 - min_group_width;
           while (group_len++ < min_group_width && out_p < out_end_p) {
-            *out_p++ = fillchar;
+            MB_CHAR2BYTES(fillchar, out_p);
           }
           // If the group is right-aligned, shift everything to the right and
           // prepend with filler characters.
         } else {
           // { Move the group to the right
-          memmove(t + min_group_width - group_len, t, (size_t)(out_p - t));
-          group_len = min_group_width - group_len;
+          group_len = (min_group_width - group_len) * utf_char2len(fillchar);
+          memmove(t + group_len, t, (size_t)(out_p - t));
           if (out_p + group_len >= (out_end_p + 1)) {
             group_len = (long)(out_end_p - out_p);
           }
@@ -3705,7 +3703,7 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
 
           // Prepend the fill characters
           for (; group_len > 0; group_len--) {
-            *t++ = fillchar;
+            MB_CHAR2BYTES(fillchar, t);
           }
         }
       }
@@ -4001,14 +3999,7 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
 
     case STL_VIRTCOL:
     case STL_VIRTCOL_ALT: {
-      // In list mode virtcol needs to be recomputed
-      colnr_T virtcol = wp->w_virtcol;
-      if (wp->w_p_list && wp->w_p_lcs_chars.tab1 == NUL) {
-        wp->w_p_list = false;
-        getvcol(wp, &wp->w_cursor, NULL, &virtcol, NULL);
-        wp->w_p_list = true;
-      }
-      virtcol++;
+      colnr_T virtcol = wp->w_virtcol + 1;
       // Don't display %V if it's the same as %c.
       if (opt == STL_VIRTCOL_ALT
           && (virtcol == (colnr_T)(!(State & INSERT) && empty_line
@@ -4237,7 +4228,7 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
           if (l + 1 == minwid && fillchar == '-' && ascii_isdigit(*t)) {
             *out_p++ = ' ';
           } else {
-            *out_p++ = fillchar;
+            MB_CHAR2BYTES(fillchar, out_p);
           }
         }
         minwid = 0;
@@ -4248,20 +4239,21 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
       }
 
       // { Copy the string text into the output buffer
-      while (*t && out_p < out_end_p) {
-        *out_p++ = *t++;
+      for (; *t && out_p < out_end_p; t++) {
         // Change a space by fillchar, unless fillchar is '-' and a
         // digit follows.
-        if (fillable && out_p[-1] == ' '
-            && (!ascii_isdigit(*t) || fillchar != '-')) {
-          out_p[-1] = fillchar;
+        if (fillable && *t == ' '
+            && (!ascii_isdigit(*(t + 1)) || fillchar != '-')) {
+          MB_CHAR2BYTES(fillchar, out_p);
+        } else {
+          *out_p++ = *t;
         }
       }
       // }
 
       // For left-aligned items, fill any remaining space with the fillchar
       for (; l < minwid && out_p < out_end_p; l++) {
-        *out_p++ = fillchar;
+        MB_CHAR2BYTES(fillchar, out_p);
       }
 
       // Otherwise if the item is a number, copy that to the output buffer.
@@ -4351,7 +4343,7 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
     // Only free the string buffer if we allocated it.
     // Note: This is not needed if `str` is pointing at `tmp`
     if (opt == STL_VIM_EXPR) {
-      xfree(str);
+      XFREE_CLEAR(str);
     }
 
     if (num >= 0 || (!itemisflag && str && *str)) {
@@ -4454,7 +4446,7 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
 
       // Fill up for half a double-wide character.
       while (++width < maxwidth) {
-        *trunc_p++ = fillchar;
+        MB_CHAR2BYTES(fillchar, trunc_p);
         *trunc_p = NUL;
       }
       // }
@@ -4505,13 +4497,13 @@ int build_stl_str_hl(win_T *wp, char_u *out, size_t outlen, char_u *fmt, int use
                          standard_spaces * (num_separators - 1);
 
       for (int i = 0; i < num_separators; i++) {
-        int dislocation = (i == (num_separators - 1))
-                          ? final_spaces : standard_spaces;
+        int dislocation = (i == (num_separators - 1)) ? final_spaces : standard_spaces;
+        dislocation *= utf_char2len(fillchar);
         char_u *start = stl_items[stl_separator_locations[i]].start;
         char_u *seploc = start + dislocation;
         STRMOVE(seploc, start);
-        for (char_u *s = start; s < seploc; s++) {
-          *s = fillchar;
+        for (char_u *s = start; s < seploc; ) {
+          MB_CHAR2BYTES(fillchar, s);
         }
 
         for (int item_idx = stl_separator_locations[i] + 1;
