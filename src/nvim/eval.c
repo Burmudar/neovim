@@ -6,6 +6,7 @@
  */
 
 #include <math.h>
+#include <stdlib.h>
 
 #include "auto/config.h"
 
@@ -764,6 +765,15 @@ static int eval1_emsg(char_u **arg, typval_T *rettv, bool evaluate)
     }
   }
   return ret;
+}
+
+/// @return whether a typval is a valid expression to pass to eval_expr_typval()
+/// or eval_expr_to_bool().  An empty string returns false;
+bool eval_expr_valid_arg(const typval_T *const tv)
+  FUNC_ATTR_NONNULL_ALL FUNC_ATTR_CONST
+{
+  return tv->v_type != VAR_UNKNOWN
+         && (tv->v_type != VAR_STRING || (tv->vval.v_string != NULL && *tv->vval.v_string != NUL));
 }
 
 int eval_expr_typval(const typval_T *expr, typval_T *argv, int argc, typval_T *rettv)
@@ -3249,7 +3259,7 @@ char_u *get_user_var_name(expand_T *xp, int idx)
   // b: variables
   // In cmdwin, the alternative buffer should be used.
   hashtab_T *ht
-      = is_in_cmdwin() ? &prevwin->w_buffer->b_vars->dv_hashtab : &curbuf->b_vars->dv_hashtab;
+    = is_in_cmdwin() ? &prevwin->w_buffer->b_vars->dv_hashtab : &curbuf->b_vars->dv_hashtab;
   if (bdone < ht->ht_used) {
     if (bdone++ == 0) {
       hi = ht->ht_array;
@@ -7737,6 +7747,7 @@ bool callback_from_typval(Callback *const callback, typval_T *const arg)
       callback->type = kCallbackFuncref;
     }
   } else if (nlua_is_table_from_lua(arg)) {
+    // TODO(tjdvries): UnifiedCallback
     char_u *name = nlua_register_table_as_callable(arg);
 
     if (name != NULL) {
@@ -7766,6 +7777,7 @@ bool callback_call(Callback *const callback, const int argcount_in, typval_T *co
 {
   partial_T *partial;
   char_u *name;
+  Array args = ARRAY_DICT_INIT;
   switch (callback->type) {
   case kCallbackFuncref:
     name = callback->data.funcref;
@@ -7775,6 +7787,13 @@ bool callback_call(Callback *const callback, const int argcount_in, typval_T *co
   case kCallbackPartial:
     partial = callback->data.partial;
     name = partial_name(partial);
+    break;
+
+  case kCallbackLua:
+    ILOG(" We tryin  to call dat dang lua ref ");
+    nlua_call_ref(callback->data.luaref, "aucmd", args, false, NULL);
+
+    return false;
     break;
 
   case kCallbackNone:
@@ -8183,7 +8202,7 @@ char *save_tv_as_string(typval_T *tv, ptrdiff_t *const len, bool endnl)
 
 /// Convert the specified byte index of line 'lnum' in buffer 'buf' to a
 /// character index.  Works only for loaded buffers. Returns -1 on failure.
-/// The index of the first character is one.
+/// The index of the first byte and the first character is zero.
 int buf_byteidx_to_charidx(buf_T *buf, int lnum, int byteidx)
 {
   if (buf == NULL || buf->b_ml.ml_mfp == NULL) {
@@ -8197,15 +8216,29 @@ int buf_byteidx_to_charidx(buf_T *buf, int lnum, int byteidx)
   char_u *str = ml_get_buf(buf, lnum, false);
 
   if (*str == NUL) {
-    return 1;
+    return 0;
   }
 
-  return mb_charlen_len(str, byteidx + 1);
+  // count the number of characters
+  char_u *t = str;
+  int count;
+  for (count = 0; *t != NUL && t <= str + byteidx; count++) {
+    t += utfc_ptr2len(t);
+  }
+
+  // In insert mode, when the cursor is at the end of a non-empty line,
+  // byteidx points to the NUL character immediately past the end of the
+  // string. In this case, add one to the character count.
+  if (*t == NUL && byteidx != 0 && t == str + byteidx) {
+    count++;
+  }
+
+  return count - 1;
 }
 
 /// Convert the specified character index of line 'lnum' in buffer 'buf' to a
-/// byte index.  Works only for loaded buffers. Returns -1 on failure. The index
-/// of the first byte and the first character is one.
+/// byte index.  Works only for loaded buffers. Returns -1 on failure.
+/// The index of the first byte and the first character is zero.
 int buf_charidx_to_byteidx(buf_T *buf, int lnum, int charidx)
 {
   if (buf == NULL || buf->b_ml.ml_mfp == NULL) {
@@ -8224,7 +8257,7 @@ int buf_charidx_to_byteidx(buf_T *buf, int lnum, int charidx)
     t += utfc_ptr2len(t);
   }
 
-  return t - str + 1;
+  return t - str;
 }
 
 /// Translate a VimL object into a position
@@ -8306,7 +8339,7 @@ pos_T *var2fpos(const typval_T *const tv, const bool dollar_lnum, int *const ret
   if (name[0] == '.') {  // Cursor.
     pos = curwin->w_cursor;
     if (charcol) {
-      pos.col = buf_byteidx_to_charidx(curbuf, pos.lnum, pos.col) - 1;
+      pos.col = buf_byteidx_to_charidx(curbuf, pos.lnum, pos.col);
     }
     return &pos;
   }
@@ -8317,7 +8350,7 @@ pos_T *var2fpos(const typval_T *const tv, const bool dollar_lnum, int *const ret
       pos = curwin->w_cursor;
     }
     if (charcol) {
-      pos.col = buf_byteidx_to_charidx(curbuf, pos.lnum, pos.col) - 1;
+      pos.col = buf_byteidx_to_charidx(curbuf, pos.lnum, pos.col);
     }
     return &pos;
   }
@@ -8327,7 +8360,7 @@ pos_T *var2fpos(const typval_T *const tv, const bool dollar_lnum, int *const ret
       return NULL;
     }
     if (charcol) {
-      pp->col = buf_byteidx_to_charidx(curbuf, pp->lnum, pp->col) - 1;
+      pp->col = buf_byteidx_to_charidx(curbuf, pp->lnum, pp->col);
     }
     return pp;
   }
@@ -8414,7 +8447,7 @@ int list2fpos(typval_T *arg, pos_T *posp, int *fnump, colnr_T *curswantp, bool c
     if (buf == NULL || buf->b_ml.ml_mfp == NULL) {
       return FAIL;
     }
-    n = buf_charidx_to_byteidx(buf, posp->lnum, n);
+    n = buf_charidx_to_byteidx(buf, posp->lnum, n) + 1;
   }
   posp->col = n;
 
@@ -9336,10 +9369,31 @@ static hashtab_T *find_var_ht_dict(const char *name, const size_t name_len, cons
   } else if (*name == 'l' && funccal != NULL) {  // local variable
     *d = &funccal->l_vars;
   } else if (*name == 's'  // script variable
-             && (current_sctx.sc_sid > 0 || current_sctx.sc_sid == SID_STR)
+             && (current_sctx.sc_sid > 0 || current_sctx.sc_sid == SID_STR
+                 || current_sctx.sc_sid == SID_LUA)
              && current_sctx.sc_sid <= ga_scripts.ga_len) {
     // For anonymous scripts without a script item, create one now so script vars can be used
-    if (current_sctx.sc_sid == SID_STR) {
+    if (current_sctx.sc_sid == SID_LUA) {
+      // try to resolve lua filename & line no so it can be shown in lastset messages.
+      nlua_set_sctx(&current_sctx);
+      if (current_sctx.sc_sid != SID_LUA) {
+        // Great we have valid location. Now here this out we'll create a new
+        // script context with the name and lineno of this one. why ?
+        // for behavioral consistency. With this different anonymous exec from
+        // same file can't access each others script local stuff. We need to do
+        // this all other cases except this will act like that otherwise.
+        const LastSet last_set = (LastSet){
+          .script_ctx = current_sctx,
+          .channel_id = LUA_INTERNAL_CALL,
+        };
+        bool should_free;
+        // should_free is ignored as script_sctx will be resolved to a fnmae
+        // & new_script_item will consume it.
+        char_u *sc_name = get_scriptname(last_set, &should_free);
+        new_script_item(sc_name, &current_sctx.sc_sid);
+      }
+    }
+    if (current_sctx.sc_sid == SID_STR || current_sctx.sc_sid == SID_LUA) {
       new_script_item(NULL, &current_sctx.sc_sid);
     }
     *d = &SCRIPT_SV(current_sctx.sc_sid)->sv_dict;
@@ -10700,7 +10754,7 @@ repeat:
     pbuf = NULL;
     // Need full path first (use expand_env() to remove a "~/")
     if (!has_fullname && !has_homerelative) {
-      if ((c == '.' || c == '~') && **fnamep == '~') {
+      if (**fnamep == '~') {
         p = pbuf = expand_env_save(*fnamep);
       } else {
         p = pbuf = (char_u *)FullName_save((char *)*fnamep, FALSE);

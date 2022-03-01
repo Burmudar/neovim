@@ -223,19 +223,20 @@ static void changed_common(linenr_T lnum, colnr_T col, linenr_T lnume, long xtra
       // values for the cursor.
       // Update the folds for this window.  Can't postpone this, because
       // a following operator might work on the whole fold: ">>dd".
-      foldUpdate(wp, lnum, lnume + xtra - 1);
+      linenr_T last = lnume + xtra - 1;  // last line after the change
+      foldUpdate(wp, lnum, last);
 
       // The change may cause lines above or below the change to become
       // included in a fold.  Set lnum/lnume to the first/last line that
       // might be displayed differently.
       // Set w_cline_folded here as an efficient way to update it when
-      // inserting lines just above a closed fold. */
+      // inserting lines just above a closed fold.
       bool folded = hasFoldingWin(wp, lnum, &lnum, NULL, false, NULL);
       if (wp->w_cursor.lnum == lnum) {
         wp->w_cline_folded = folded;
       }
-      folded = hasFoldingWin(wp, lnume, NULL, &lnume, false, NULL);
-      if (wp->w_cursor.lnum == lnume) {
+      folded = hasFoldingWin(wp, last, NULL, &last, false, NULL);
+      if (wp->w_cursor.lnum == last) {
         wp->w_cline_folded = folded;
       }
 
@@ -1201,10 +1202,10 @@ int open_line(int dir, int flags, int second_line_indent, bool *did_do_comment)
   // Find out if the current line starts with a comment leader.
   // This may then be inserted in front of the new line.
   end_comment_pending = NUL;
-  if (flags & OPENLINE_DO_COM && dir == FORWARD) {
-    // Check for a line comment after code.
+  if (flags & OPENLINE_DO_COM) {
     lead_len = get_leader_len(saved_line, &lead_flags, dir == BACKWARD, true);
-    if (lead_len == 0 && do_cindent) {
+    if (lead_len == 0 && do_cindent && dir == FORWARD) {
+      // Check for a line comment after code.
       comment_start = check_linecomment(saved_line);
       if (comment_start != MAXCOL) {
         lead_len = get_leader_len(saved_line + comment_start,

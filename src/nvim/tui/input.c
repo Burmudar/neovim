@@ -5,7 +5,7 @@
 #include "nvim/api/private/helpers.h"
 #include "nvim/api/vim.h"
 #include "nvim/ascii.h"
-#include "nvim/aucmd.h"
+#include "nvim/autocmd.h"
 #include "nvim/charset.h"
 #include "nvim/ex_docmd.h"
 #include "nvim/macros.h"
@@ -227,7 +227,7 @@ static void forward_modified_utf8(TermInput *input, TermKeyKey *key)
         && !(key->modifiers & TERMKEY_KEYMOD_SHIFT)
         && ASCII_ISUPPER(key->code.codepoint)) {
       assert(len <= 62);
-      // Make remove for the S-
+      // Make room for the S-
       memmove(buf + 3, buf + 1, len - 1);
       buf[1] = 'S';
       buf[2] = '-';
@@ -378,7 +378,7 @@ static bool handle_focus_event(TermInput *input)
     bool focus_gained = *rbuffer_get(input->read_stream.buffer, 2) == 'I';
     // Advance past the sequence
     rbuffer_consumed(input->read_stream.buffer, 3);
-    aucmd_schedule_focusgained(focus_gained);
+    autocmd_schedule_focusgained(focus_gained);
     return true;
   }
   return false;

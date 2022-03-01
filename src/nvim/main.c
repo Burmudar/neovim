@@ -9,7 +9,7 @@
 #include <string.h>
 
 #include "nvim/ascii.h"
-#include "nvim/aucmd.h"
+#include "nvim/autocmd.h"
 #include "nvim/buffer.h"
 #include "nvim/channel.h"
 #include "nvim/charset.h"
@@ -154,10 +154,10 @@ bool event_teardown(void)
 void early_init(mparm_T *paramp)
 {
   env_init();
-  fs_init();
   eval_init();          // init global variables
   init_path(argv0 ? argv0 : "nvim");
   init_normal_cmds();   // Init the table of Normal mode commands.
+  runtime_init();
   highlight_init();
 
 #ifdef WIN32
@@ -229,6 +229,10 @@ int main(int argc, char **argv)
   // Many variables are in `params` so that we can pass them around easily.
   // `argc` and `argv` are also copied, so that they can be changed.
   init_params(&params, argc, argv);
+
+  // Since os_open is called during the init_startuptime, we need to call
+  // fs_init before it.
+  fs_init();
 
   init_startuptime(&params);
 
@@ -1560,7 +1564,7 @@ static void edit_buffers(mparm_T *parmp, char_u *cwd)
 
   // When w_arg_idx is -1 remove the window (see create_windows()).
   if (curwin->w_arg_idx == -1) {
-    win_close(curwin, true);
+    win_close(curwin, true, false);
     advance = false;
   }
 
@@ -1572,7 +1576,7 @@ static void edit_buffers(mparm_T *parmp, char_u *cwd)
     // When w_arg_idx is -1 remove the window (see create_windows()).
     if (curwin->w_arg_idx == -1) {
       arg_idx++;
-      win_close(curwin, true);
+      win_close(curwin, true, false);
       advance = false;
       continue;
     }
@@ -1619,7 +1623,7 @@ static void edit_buffers(mparm_T *parmp, char_u *cwd)
           did_emsg = FALSE;             // avoid hit-enter prompt
           getout(1);
         }
-        win_close(curwin, true);
+        win_close(curwin, true, false);
         advance = false;
       }
       if (arg_idx == GARGCOUNT - 1) {

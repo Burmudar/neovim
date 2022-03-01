@@ -31,6 +31,7 @@
 #include "nvim/file_search.h"
 #include "nvim/fileio.h"
 #include "nvim/getchar.h"
+#include "nvim/globals.h"
 #include "nvim/highlight.h"
 #include "nvim/highlight_defs.h"
 #include "nvim/lua/executor.h"
@@ -122,6 +123,10 @@ Dictionary nvim__get_hl_defs(Integer ns_id, Error *err)
 }
 
 /// Set a highlight group.
+///
+/// Note: unlike the `:highlight` command which can update a highlight group,
+/// this function completely replaces the definition. For example:
+/// `nvim_set_hl(0, 'Visual', {})` will clear the highlight group 'Visual'.
 ///
 /// @param ns_id number of namespace for this highlight. Use value 0
 ///              to set a highlight group in the global (`:highlight`)
@@ -496,8 +501,12 @@ ArrayOf(String) nvim_get_runtime_file(String name, Boolean all, Error *err)
 
   int flags = DIP_DIRFILE | (all ? DIP_ALL : 0);
 
-  do_in_runtimepath((char_u *)(name.size ? name.data : ""),
-                    flags, find_runtime_cb, &rv);
+  TRY_WRAP({
+    try_start();
+    do_in_runtimepath((char_u *)(name.size ? name.data : ""),
+                      flags, find_runtime_cb, &rv);
+    try_end(err);
+  });
   return rv;
 }
 
@@ -545,20 +554,19 @@ void nvim_set_current_dir(String dir, Error *err)
     return;
   }
 
-  char string[MAXPATHL];
+  char_u string[MAXPATHL];
   memcpy(string, dir.data, dir.size);
   string[dir.size] = NUL;
 
   try_start();
 
-  if (vim_chdir((char_u *)string)) {
+  if (!changedir_func(string, kCdScopeGlobal)) {
     if (!try_end(err)) {
       api_set_error(err, kErrorTypeException, "Failed to change directory");
     }
     return;
   }
 
-  post_chdir(kCdScopeGlobal, true);
   try_end(err);
 }
 
@@ -601,7 +609,19 @@ void nvim_del_current_line(Error *err)
 Object nvim_get_var(String name, Error *err)
   FUNC_API_SINCE(1)
 {
-  return dict_get_value(&globvardict, name, err);
+  dictitem_T *di = tv_dict_find(&globvardict, name.data, (ptrdiff_t)name.size);
+  if (di == NULL) {  // try to autoload script
+    if (!script_autoload(name.data, name.size, false) || aborting()) {
+      api_set_error(err, kErrorTypeValidation, "Key not found: %s", name.data);
+      return (Object)OBJECT_INIT;
+    }
+    di = tv_dict_find(&globvardict, name.data, (ptrdiff_t)name.size);
+  }
+  if (di == NULL) {
+    api_set_error(err, kErrorTypeValidation, "Key not found: %s", name.data);
+    return (Object)OBJECT_INIT;
+  }
+  return vim_to_object(&di->di_tv);
 }
 
 /// Sets a global (g:) variable.
@@ -1566,21 +1586,23 @@ ArrayOf(Dictionary) nvim_get_keymap(uint64_t channel_id, String mode)
 ///     nmap <nowait> <Space><NL> <Nop>
 /// </pre>
 ///
+/// @param channel_id
 /// @param  mode  Mode short-name (map command prefix: "n", "i", "v", "x", …)
 ///               or "!" for |:map!|, or empty string for |:map|.
 /// @param  lhs   Left-hand-side |{lhs}| of the mapping.
 /// @param  rhs   Right-hand-side |{rhs}| of the mapping.
 /// @param  opts  Optional parameters map. Accepts all |:map-arguments|
 ///               as keys excluding |<buffer>| but including |noremap| and "desc".
-///               |desc| can be used to give a description to keymap.
+///               "desc" can be used to give a description to keymap.
 ///               When called from Lua, also accepts a "callback" key that takes
 ///               a Lua function to call when the mapping is executed.
 ///               Values are Booleans. Unknown key is an error.
 /// @param[out]   err   Error details, if any.
-void nvim_set_keymap(String mode, String lhs, String rhs, Dict(keymap) *opts, Error *err)
+void nvim_set_keymap(uint64_t channel_id, String mode, String lhs, String rhs, Dict(keymap) *opts,
+                     Error *err)
   FUNC_API_SINCE(6)
 {
-  modify_keymap(-1, false, mode, lhs, rhs, opts, err);
+  modify_keymap(channel_id, -1, false, mode, lhs, rhs, opts, err);
 }
 
 /// Unmaps a global |mapping| for the given mode.
@@ -1588,10 +1610,10 @@ void nvim_set_keymap(String mode, String lhs, String rhs, Dict(keymap) *opts, Er
 /// To unmap a buffer-local mapping, use |nvim_buf_del_keymap()|.
 ///
 /// @see |nvim_set_keymap()|
-void nvim_del_keymap(String mode, String lhs, Error *err)
+void nvim_del_keymap(uint64_t channel_id, String mode, String lhs, Error *err)
   FUNC_API_SINCE(6)
 {
-  nvim_buf_del_keymap(-1, mode, lhs, err);
+  nvim_buf_del_keymap(channel_id, -1, mode, lhs, err);
 }
 
 /// Gets a map of global (non-buffer-local) Ex commands.
@@ -1935,7 +1957,7 @@ Dictionary nvim__stats(void)
   Dictionary rv = ARRAY_DICT_INIT;
   PUT(rv, "fsync", INTEGER_OBJ(g_stats.fsync));
   PUT(rv, "redraw", INTEGER_OBJ(g_stats.redraw));
-  PUT(rv, "lua_refcount", INTEGER_OBJ(nlua_refcount));
+  PUT(rv, "lua_refcount", INTEGER_OBJ(nlua_get_global_ref_count()));
   return rv;
 }
 
@@ -2395,6 +2417,8 @@ Dictionary nvim_eval_statusline(String str, Dict(eval_statusline) *opts, Error *
 ///                 from Lua, the command can also be a Lua function. The function is called with a
 ///                 single table argument that contains the following keys:
 ///                 - args: (string) The args passed to the command, if any |<args>|
+///                 - fargs: (table) The args split by unescaped whitespace (when more than one
+///                 argument is allowed), if any |<f-args>|
 ///                 - bang: (boolean) "true" if the command was executed with a ! modifier |<bang>|
 ///                 - line1: (number) The starting line of the command range |<line1>|
 ///                 - line2: (number) The final line of the command range |<line2>|

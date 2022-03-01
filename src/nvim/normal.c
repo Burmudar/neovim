@@ -824,13 +824,10 @@ static bool normal_get_command_count(NormalState *s)
     if (s->c == K_DEL || s->c == K_KDEL) {
       s->ca.count0 /= 10;
       del_from_showcmd(4);            // delete the digit and ~@%
+    } else if (s->ca.count0 > 99999999L) {
+      s->ca.count0 = 999999999L;
     } else {
       s->ca.count0 = s->ca.count0 * 10 + (s->c - '0');
-    }
-
-    if (s->ca.count0 < 0) {
-      // overflow
-      s->ca.count0 = 999999999L;
     }
 
     // Set v:count here, when called from main() and not a stuffed
@@ -1046,13 +1043,13 @@ static int normal_execute(VimState *state, int key)
     // If you give a count before AND after the operator, they are
     // multiplied.
     if (s->ca.count0) {
-      s->ca.count0 = (long)((uint64_t)s->ca.count0 * (uint64_t)s->ca.opcount);
+      if (s->ca.opcount >= 999999999L / s->ca.count0) {
+        s->ca.count0 = 999999999L;
+      } else {
+        s->ca.count0 *= s->ca.opcount;
+      }
     } else {
       s->ca.count0 = s->ca.opcount;
-    }
-    if (s->ca.count0 < 0) {
-      // overflow
-      s->ca.count0 = 999999999L;
     }
   }
 
@@ -7509,9 +7506,9 @@ static void nv_put_opt(cmdarg_T *cap, bool fix_indent)
       // overwrites if the old contents is being put.
       was_visual = true;
       regname = cap->oap->regname;
+      bool save_unnamed = cap->cmdchar == 'P';
       // '+' and '*' could be the same selection
-      bool clipoverwrite = (regname == '+' || regname == '*')
-                           && (cb_flags & CB_UNNAMEDMASK);
+      bool clipoverwrite = (regname == '+' || regname == '*') && (cb_flags & CB_UNNAMEDMASK);
       if (regname == 0 || regname == '"' || clipoverwrite
           || ascii_isdigit(regname) || regname == '-') {
         // The delete might overwrite the register we want to put, save it first
@@ -7524,6 +7521,10 @@ static void nv_put_opt(cmdarg_T *cap, bool fix_indent)
       // do_put(), which requires the visual selection to still be active.
       if (!VIsual_active || VIsual_mode == 'V' || regname != '.') {
         // Now delete the selected text. Avoid messages here.
+        yankreg_T *old_y_previous;
+        if (save_unnamed) {
+          old_y_previous = get_y_previous();
+        }
         cap->cmdchar = 'd';
         cap->nchar = NUL;
         cap->oap->regname = NUL;
@@ -7532,6 +7533,10 @@ static void nv_put_opt(cmdarg_T *cap, bool fix_indent)
         do_pending_operator(cap, 0, false);
         empty = (curbuf->b_ml.ml_flags & ML_EMPTY);
         msg_silent--;
+
+        if (save_unnamed) {
+          set_y_previous(old_y_previous);
+        }
 
         // delete PUT_LINE_BACKWARD;
         cap->oap->regname = regname;

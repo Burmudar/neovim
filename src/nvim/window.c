@@ -304,7 +304,7 @@ newwindow:
         newtab = curtab;
         goto_tabpage_tp(oldtab, true, true);
         if (curwin == wp) {
-          win_close(curwin, false);
+          win_close(curwin, false, false);
         }
         if (valid_tabpage(newtab)) {
           goto_tabpage_tp(newtab, true, true);
@@ -449,7 +449,7 @@ wingotofile:
         RESET_BINDING(curwin);
         if (do_ecmd(0, ptr, NULL, NULL, ECMD_LASTL, ECMD_HIDE, NULL) == FAIL) {
           // Failed to open the file, close the window opened for it.
-          win_close(curwin, false);
+          win_close(curwin, false, false);
           goto_tabpage_win(oldtab, oldwin);
         } else if (nchar == 'F' && lnum >= 0) {
           curwin->w_cursor.lnum = lnum;
@@ -957,6 +957,11 @@ int win_split_ins(int size, int flags, win_T *new_wp, int dir)
   int minheight;
   int wmh1;
   bool did_set_fraction = false;
+
+  // aucmd_win should always remain floating
+  if (new_wp != NULL && new_wp == aucmd_win) {
+    return FAIL;
+  }
 
   if (flags & WSP_TOP) {
     oldwin = firstwin;
@@ -1482,8 +1487,6 @@ static void win_init(win_T *newp, win_T *oldp, int flags)
   copyFoldingState(oldp, newp);
 
   win_init_some(newp, oldp);
-
-  didset_window_options(newp);
 }
 
 /*
@@ -1729,6 +1732,12 @@ static void win_exchange(long Prenum)
 
   (void)win_comp_pos();                 // recompute window positions
 
+  if (wp->w_buffer != curbuf) {
+    reset_VIsual_and_resel();
+  } else if (VIsual_active) {
+    wp->w_cursor = curwin->w_cursor;
+  }
+
   win_enter(wp, true);
   redraw_later(curwin, NOT_VALID);
   redraw_later(wp, NOT_VALID);
@@ -1827,6 +1836,9 @@ static void win_totop(int size, int flags)
 
   if (firstwin == curwin && lastwin_nofloating() == curwin) {
     beep_flush();
+    return;
+  }
+  if (curwin == aucmd_win) {
     return;
   }
 
@@ -2290,7 +2302,7 @@ void close_windows(buf_T *buf, int keep_curwin)
   for (win_T *wp = firstwin; wp != NULL && !ONE_WINDOW;) {
     if (wp->w_buffer == buf && (!keep_curwin || wp != curwin)
         && !(wp->w_closing || wp->w_buffer->b_locked > 0)) {
-      if (win_close(wp, false) == FAIL) {
+      if (win_close(wp, false, false) == FAIL) {
         // If closing the window fails give up, to avoid looping forever.
         break;
       }
@@ -2368,6 +2380,22 @@ bool last_nonfloat(win_T *wp) FUNC_ATTR_PURE FUNC_ATTR_WARN_UNUSED_RESULT
   return wp != NULL && firstwin == wp && !(wp->w_next && !wp->w_floating);
 }
 
+/// Check if floating windows can be closed.
+///
+/// @return true if all floating windows can be closed
+static bool can_close_floating_windows(tabpage_T *tab)
+{
+  FOR_ALL_WINDOWS_IN_TAB(wp, tab) {
+    buf_T *buf = wp->w_buffer;
+    int need_hide = (bufIsChanged(buf) && buf->b_nwindows <= 1);
+
+    if (need_hide && !buf_hide(buf)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// Close the possibly last window in a tab page.
 ///
 /// @param  win          window to close
@@ -2432,7 +2460,7 @@ static bool close_last_window_tabpage(win_T *win, bool free_buf, tabpage_T *prev
 //
 // Called by :quit, :close, :xit, :wq and findtag().
 // Returns FAIL when the window was not closed.
-int win_close(win_T *win, bool free_buf)
+int win_close(win_T *win, bool free_buf, bool force)
 {
   win_T *wp;
   bool other_buffer = false;
@@ -2462,9 +2490,18 @@ int win_close(win_T *win, bool free_buf)
   }
   if ((firstwin == win && lastwin_nofloating() == win)
       && lastwin->w_floating) {
-    // TODO(bfredl): we might close the float also instead
-    emsg(e_floatonly);
-    return FAIL;
+    if (force || can_close_floating_windows(curtab)) {
+      win_T *nextwp;
+      for (win_T *wpp = firstwin; wpp != NULL; wpp = nextwp) {
+        nextwp = wpp->w_next;
+        if (wpp->w_floating) {
+          win_close(wpp, free_buf, force);
+        }
+      }
+    } else {
+      emsg(e_floatonly);
+      return FAIL;
+    }
   }
 
   // When closing the last window in a tab page first go to another tab page
@@ -3056,9 +3093,21 @@ static frame_T *win_altframe(win_T *win, tabpage_T *tp)
     return frp->fr_prev;
   }
 
+  // By default the next window will get the space that was abandoned by this
+  // window
   frame_T *target_fr = frp->fr_next;
   frame_T *other_fr  = frp->fr_prev;
-  if (p_spr || p_sb) {
+
+  // If this is part of a column of windows and 'splitbelow' is true then the
+  // previous window will get the space.
+  if (frp->fr_parent != NULL && frp->fr_parent->fr_layout == FR_COL && p_sb) {
+    target_fr = frp->fr_prev;
+    other_fr  = frp->fr_next;
+  }
+
+  // If this is part of a row of windows, and 'splitright' is true then the
+  // previous window will get the space.
+  if (frp->fr_parent != NULL && frp->fr_parent->fr_layout == FR_ROW && p_spr) {
     target_fr = frp->fr_prev;
     other_fr  = frp->fr_next;
   }
@@ -3611,7 +3660,9 @@ void close_others(int message, int forceit)
         continue;
       }
     }
-    win_close(wp, !buf_hide(wp->w_buffer) && !bufIsChanged(wp->w_buffer));
+    win_close(wp,
+              !buf_hide(wp->w_buffer) && !bufIsChanged(wp->w_buffer),
+              false);
   }
 
   if (message && !ONE_WINDOW) {
@@ -4645,20 +4696,29 @@ void fix_current_dir(void)
         globaldir = (char_u *)xstrdup(cwd);
       }
     }
-    if (os_chdir(new_dir) == 0) {
-      if (!p_acd && pathcmp(new_dir, cwd, -1) != 0) {
-        do_autocmd_dirchanged(new_dir, curwin->w_localdir
-                              ? kCdScopeWindow : kCdScopeTabpage, kCdCauseWindow);
-      }
-      last_chdir_reason = NULL;
-      shorten_fnames(true);
+    bool dir_differs = pathcmp(new_dir, cwd, -1) != 0;
+    if (!p_acd && dir_differs) {
+      do_autocmd_dirchanged(new_dir, curwin->w_localdir ? kCdScopeWindow : kCdScopeTabpage,
+                            kCdCauseWindow, true);
     }
+    if (os_chdir(new_dir) == 0) {
+      if (!p_acd && dir_differs) {
+        do_autocmd_dirchanged(new_dir, curwin->w_localdir ? kCdScopeWindow : kCdScopeTabpage,
+                              kCdCauseWindow, false);
+      }
+    }
+    last_chdir_reason = NULL;
+    shorten_fnames(true);
   } else if (globaldir != NULL) {
     // Window doesn't have a local directory and we are not in the global
     // directory: Change to the global directory.
+    bool dir_differs = pathcmp((char *)globaldir, cwd, -1) != 0;
+    if (!p_acd && dir_differs) {
+      do_autocmd_dirchanged((char *)globaldir, kCdScopeGlobal, kCdCauseWindow, true);
+    }
     if (os_chdir((char *)globaldir) == 0) {
-      if (!p_acd && pathcmp((char *)globaldir, cwd, -1) != 0) {
-        do_autocmd_dirchanged((char *)globaldir, kCdScopeGlobal, kCdCauseWindow);
+      if (!p_acd && dir_differs) {
+        do_autocmd_dirchanged((char *)globaldir, kCdScopeGlobal, kCdCauseWindow, false);
       }
     }
     XFREE_CLEAR(globaldir);

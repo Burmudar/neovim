@@ -81,6 +81,7 @@ let s:filename_checks = {
     \ 'bc': ['file.bc'],
     \ 'bdf': ['file.bdf'],
     \ 'bib': ['file.bib'],
+    \ 'bicep': ['file.bicep'],
     \ 'beancount': ['file.beancount'],
     \ 'bindzone': ['named.root', '/bind/db.file', '/named/db.file', 'any/bind/db.file', 'any/named/db.file'],
     \ 'blank': ['file.bl'],
@@ -131,6 +132,7 @@ let s:filename_checks = {
     \ 'cvs': ['cvs123'],
     \ 'cvsrc': ['.cvsrc'],
     \ 'cynpp': ['file.cyn'],
+    \ 'd': ['file.d'],
     \ 'dart': ['file.dart', 'file.drt'],
     \ 'datascript': ['file.ds'],
     \ 'dcd': ['file.dcd'],
@@ -153,6 +155,7 @@ let s:filename_checks = {
     \ 'dot': ['file.dot', 'file.gv'],
     \ 'dracula': ['file.drac', 'file.drc', 'filelvs', 'filelpe', 'drac.file', 'lpe', 'lvs', 'some-lpe', 'some-lvs'],
     \ 'dtd': ['file.dtd'],
+    \ 'dtrace': ['/usr/lib/dtrace/io.d'],
     \ 'dts': ['file.dts', 'file.dtsi'],
     \ 'dune': ['jbuild', 'dune', 'dune-project', 'dune-workspace'],
     \ 'dylan': ['file.dylan'],
@@ -271,6 +274,7 @@ let s:filename_checks = {
     \ 'java': ['file.java', 'file.jav'],
     \ 'javacc': ['file.jj', 'file.jjt'],
     \ 'javascript': ['file.js', 'file.javascript', 'file.es', 'file.mjs', 'file.cjs'],
+    \ 'javascript.glimmer': ['file.gjs'],
     \ 'javascriptreact': ['file.jsx'],
     \ 'jess': ['file.clp'],
     \ 'jgraph': ['file.jgr'],
@@ -435,6 +439,7 @@ let s:filename_checks = {
     \ 'readline': ['.inputrc', 'inputrc'],
     \ 'remind': ['.reminders', 'file.remind', 'file.rem', '.reminders-file'],
     \ 'rego': ['file.rego'],
+    \ 'rescript': ['file.res', 'file.resi'],
     \ 'resolv': ['resolv.conf'],
     \ 'reva': ['file.frt'],
     \ 'rexx': ['file.rex', 'file.orx', 'file.rxo', 'file.rxj', 'file.jrexx', 'file.rexxj', 'file.rexx', 'file.testGroup', 'file.testUnit'],
@@ -476,6 +481,7 @@ let s:filename_checks = {
     \ 'skill': ['file.il', 'file.ils', 'file.cdf'],
     \ 'slang': ['file.sl'],
     \ 'slice': ['file.ice'],
+    \ 'solidity': ['file.sol'],
     \ 'solution': ['file.sln'],
     \ 'slpconf': ['/etc/slp.conf', 'any/etc/slp.conf'],
     \ 'slpreg': ['/etc/slp.reg', 'any/etc/slp.reg'],
@@ -543,6 +549,7 @@ let s:filename_checks = {
     \ 'tssgm': ['file.tssgm'],
     \ 'tssop': ['file.tssop'],
     \ 'twig': ['file.twig'],
+    \ 'typescript.glimmer': ['file.gts'],
     \ 'typescriptreact': ['file.tsx'],
     \ 'uc': ['file.uc'],
     \ 'udevconf': ['/etc/udev/udev.conf', 'any/etc/udev/udev.conf'],
@@ -794,6 +801,42 @@ func Test_bas_file()
   bwipe!
 
   call delete('Xfile.bas')
+  filetype off
+endfunc
+
+func Test_d_file()
+  filetype on
+
+  call writefile(['looks like D'], 'Xfile.d')
+  split Xfile.d
+  call assert_equal('d', &filetype)
+  bwipe!
+
+  call writefile(['#!/some/bin/dtrace'], 'Xfile.d')
+  split Xfile.d
+  call assert_equal('dtrace', &filetype)
+  bwipe!
+
+  call writefile(['#pragma  D  option'], 'Xfile.d')
+  split Xfile.d
+  call assert_equal('dtrace', &filetype)
+  bwipe!
+
+  call writefile([':some:thing:'], 'Xfile.d')
+  split Xfile.d
+  call assert_equal('dtrace', &filetype)
+  bwipe!
+
+  call writefile(['module this', '#pragma  D  option'], 'Xfile.d')
+  split Xfile.d
+  call assert_equal('d', &filetype)
+  bwipe!
+
+  call writefile(['import that', '#pragma  D  option'], 'Xfile.d')
+  split Xfile.d
+  call assert_equal('d', &filetype)
+  bwipe!
+
   filetype off
 endfunc
 

@@ -195,10 +195,12 @@ describe("API: set highlight", function()
     reverse = true,
     undercurl = true,
     underline = true,
+    strikethrough = true,
     cterm = {
       italic = true,
       reverse = true,
       undercurl = true,
+      strikethrough = true,
     }
   }
   local highlight3_result_gui = {
@@ -209,6 +211,7 @@ describe("API: set highlight", function()
     reverse = true,
     undercurl = true,
     underline = true,
+    strikethrough = true,
   }
   local highlight3_result_cterm = {
     background = highlight_color.ctermbg,
@@ -216,6 +219,7 @@ describe("API: set highlight", function()
     italic = true,
     reverse = true,
     undercurl = true,
+    strikethrough = true,
   }
 
   local function get_ns()
@@ -236,6 +240,12 @@ describe("API: set highlight", function()
     local ns = get_ns()
     meths.set_hl(ns, 'Test_hl', highlight2_config)
     eq(highlight2_result, meths.get_hl_by_name('Test_hl', false))
+  end)
+
+  it ("can set emtpy cterm attr", function()
+    local ns = get_ns()
+    meths.set_hl(ns, 'Test_hl', { cterm = {} })
+    eq({}, meths.get_hl_by_name('Test_hl', false))
   end)
 
   it ("cterm attr defaults to gui attr", function()
@@ -264,12 +274,58 @@ describe("API: set highlight", function()
       exec_capture('highlight Test_hl'))
 
     meths.set_hl(0, 'Test_hl2', highlight3_config)
-    eq('Test_hl2       xxx cterm=undercurl,italic,reverse ctermfg=8 ctermbg=15 gui=bold,underline,undercurl,italic,reverse guifg=#ff0000 guibg=#0032aa',
+    eq('Test_hl2       xxx cterm=undercurl,italic,reverse,strikethrough ctermfg=8 ctermbg=15 gui=bold,underline,undercurl,italic,reverse,strikethrough guifg=#ff0000 guibg=#0032aa',
       exec_capture('highlight Test_hl2'))
 
     -- Colors are stored exactly as they are defined.
     meths.set_hl(0, 'Test_hl3', { bg = 'reD', fg = 'bLue'})
     eq('Test_hl3       xxx guifg=bLue guibg=reD',
       exec_capture('highlight Test_hl3'))
+  end)
+
+  it ("can modify a highlight in the global namespace", function()
+    meths.set_hl(0, 'Test_hl3', { bg = 'red', fg = 'blue'})
+    eq('Test_hl3       xxx guifg=blue guibg=red',
+      exec_capture('highlight Test_hl3'))
+
+    meths.set_hl(0, 'Test_hl3', { bg = 'red' })
+    eq('Test_hl3       xxx guibg=red',
+      exec_capture('highlight Test_hl3'))
+
+    meths.set_hl(0, 'Test_hl3', { ctermbg = 9, ctermfg = 12})
+    eq('Test_hl3       xxx ctermfg=12 ctermbg=9',
+      exec_capture('highlight Test_hl3'))
+
+    meths.set_hl(0, 'Test_hl3', { ctermbg = 'red' , ctermfg = 'blue'})
+    eq('Test_hl3       xxx ctermfg=12 ctermbg=9',
+      exec_capture('highlight Test_hl3'))
+
+    meths.set_hl(0, 'Test_hl3', { ctermbg = 9 })
+    eq('Test_hl3       xxx ctermbg=9',
+      exec_capture('highlight Test_hl3'))
+
+    eq("'redd' is not a valid color",
+      pcall_err(meths.set_hl, 0, 'Test_hl3', {fg='redd'}))
+
+    eq("'bleu' is not a valid color",
+      pcall_err(meths.set_hl, 0, 'Test_hl3', {ctermfg='bleu'}))
+
+    meths.set_hl(0, 'Test_hl3', {fg='#FF00FF'})
+    eq('Test_hl3       xxx guifg=#FF00FF',
+      exec_capture('highlight Test_hl3'))
+
+    eq("'#FF00FF' is not a valid color",
+      pcall_err(meths.set_hl, 0, 'Test_hl3', {ctermfg='#FF00FF'}))
+
+    for _, fg_val in ipairs{ nil, 'NONE', 'nOnE', '', -1 } do
+      meths.set_hl(0, 'Test_hl3', {fg = fg_val})
+      eq('Test_hl3       xxx cleared',
+        exec_capture('highlight Test_hl3'))
+    end
+
+    meths.set_hl(0, 'Test_hl3', {fg='#FF00FF', blend=50})
+    eq('Test_hl3       xxx guifg=#FF00FF blend=50',
+      exec_capture('highlight Test_hl3'))
+
   end)
 end)

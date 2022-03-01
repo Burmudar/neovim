@@ -23,6 +23,7 @@ local next_msg = helpers.next_msg
 local tmpname = helpers.tmpname
 local write_file = helpers.write_file
 local exec_lua = helpers.exec_lua
+local exc_exec = helpers.exc_exec
 
 local pcall_err = helpers.pcall_err
 local format_string = helpers.format_string
@@ -536,6 +537,31 @@ describe('API', function()
     end)
   end)
 
+  describe('nvim_set_current_dir', function()
+    local start_dir
+
+    before_each(function()
+      clear()
+      funcs.mkdir("Xtestdir")
+      start_dir = funcs.getcwd()
+    end)
+
+    after_each(function()
+      helpers.rmdir("Xtestdir")
+    end)
+
+    it('works', function()
+      meths.set_current_dir("Xtestdir")
+      eq(funcs.getcwd(), start_dir .. helpers.get_pathsep() .. "Xtestdir")
+    end)
+
+    it('sets previous directory', function()
+      meths.set_current_dir("Xtestdir")
+      meths.exec('cd -', false)
+      eq(funcs.getcwd(), start_dir)
+    end)
+  end)
+
   describe('nvim_exec_lua', function()
     it('works', function()
       meths.exec_lua('vim.api.nvim_set_var("test", 3)', {})
@@ -873,6 +899,19 @@ describe('API', function()
       command('lockvar lua')
       eq('Key is locked: lua', pcall_err(meths.del_var, 'lua'))
       eq('Key is locked: lua', pcall_err(meths.set_var, 'lua', 1))
+
+      -- Check if autoload works properly
+      local pathsep = helpers.get_pathsep()
+      local xconfig = 'Xhome' .. pathsep .. 'Xconfig'
+      local xdata = 'Xhome' .. pathsep .. 'Xdata'
+      local autoload_folder = table.concat({xconfig, 'nvim', 'autoload'}, pathsep)
+      local autoload_file = table.concat({autoload_folder , 'testload.vim'}, pathsep)
+      mkdir_p(autoload_folder)
+      write_file(autoload_file , [[let testload#value = 2]])
+
+      clear{ args_rm={'-u'}, env={ XDG_CONFIG_HOME=xconfig, XDG_DATA_HOME=xdata } }
+      eq(2, meths.get_var('testload#value'))
+      rmdir('Xhome')
     end)
 
     it('nvim_get_vvar, nvim_set_vvar', function()
@@ -2201,6 +2240,14 @@ describe('API', function()
       ok(endswith(val[1], p"lua/vim/"))
 
       eq({}, meths.get_runtime_file("foobarlang/", true))
+    end)
+    it('can handle bad patterns', function()
+      if helpers.pending_win32(pending) then return end
+
+      eq("Vim:E220: Missing }.", pcall_err(meths.get_runtime_file, "{", false))
+
+      eq('Vim(echo):E5555: API call: Vim:E220: Missing }.',
+        exc_exec("echo nvim_get_runtime_file('{', v:false)"))
     end)
   end)
 

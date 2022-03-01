@@ -322,6 +322,8 @@ coerced to strings. See |id()| for more details, currently it uses
 
 |c_CTRL-R| pasting a non-special register into |cmdline| omits the last <CR>.
 
+|CursorMoved| always triggers when moving between windows.
+
 Lua interface (|lua.txt|):
 
 - `:lua print("a\0b")` will print `a^@b`, like with `:echomsg "a\nb"` . In Vim
@@ -355,6 +357,10 @@ Macro/|recording| behavior
   'keymap' is implemented via :lmap instead of :lnoremap so that you can use
   macros and 'keymap' at the same time. This also means you can use |:imap| on
   the results of keys from 'keymap'.
+
+Mappings:
+- A mapping whose {lhs} starts with <Plug> is always applied even if mapping
+  is disallowed by |nore|.
 
 Motion:
   The |jumplist| avoids useless/phantom jumps.
@@ -431,7 +437,8 @@ Vimscript compatibility:
   `this_session` does not alias to |v:this_session|
 
 Working directory (Vim implemented some of these later than Nvim):
-- |DirChanged| can be triggered when switching to another window.
+- |DirChanged| and |DirChangedPre| can be triggered when switching to another
+  window or tab.
 - |getcwd()| and |haslocaldir()| may throw errors if the tab page or window
   cannot be found.  *E5000* *E5001* *E5002*
 - |haslocaldir()| checks for tab-local directory if and only if -1 is passed as
@@ -483,7 +490,6 @@ Commands:
   :tearoff
 
 Compile-time features:
-  EBCDIC
   Emacs tags support
   X11 integration (see |x11-selection|)
 
@@ -492,6 +498,9 @@ Eval:
   *js_encode()*
   *js_decode()*
   *v:none* (used by Vim to represent JavaScript "undefined"); use |v:null| instead.
+  *v:sizeofint*
+  *v:sizeoflong*
+  *v:sizeofpointer*
 
 Events:
   *SigUSR1* Use |Signal| to detect `SIGUSR1` signal instead.

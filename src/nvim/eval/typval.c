@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lauxlib.h"
 #include "nvim/ascii.h"
 #include "nvim/assert.h"
 #include "nvim/charset.h"
@@ -28,11 +29,11 @@
 #include "nvim/mbyte.h"
 #include "nvim/memory.h"
 #include "nvim/message.h"
+#include "nvim/os/fileio.h"
 #include "nvim/os/input.h"
 #include "nvim/pos.h"
 #include "nvim/types.h"
 #include "nvim/vim.h"
-#include "nvim/os/fileio.h"
 
 #ifdef INCLUDE_GENERATED_DECLARATIONS
 # include "eval/typval.c.generated.h"
@@ -1123,6 +1124,8 @@ bool tv_callback_equal(const Callback *cb1, const Callback *cb2)
     // FIXME: this is inconsistent with tv_equal but is needed for precision
     // maybe change dictwatcheradd to return a watcher id instead?
     return cb1->data.partial == cb2->data.partial;
+  case kCallbackLua:
+    return cb1->data.luaref == cb2->data.luaref;
   case kCallbackNone:
     return true;
   }
@@ -1142,11 +1145,35 @@ void callback_free(Callback *callback)
   case kCallbackPartial:
     partial_unref(callback->data.partial);
     break;
+  case kCallbackLua:
+    NLUA_CLEAR_REF(callback->data.luaref);
+    break;
   case kCallbackNone:
     break;
   }
   callback->type = kCallbackNone;
   callback->data.funcref = NULL;
+}
+
+/// Check if callback is freed
+bool callback_is_freed(Callback callback)
+{
+  switch (callback.type) {
+  case kCallbackFuncref:
+    return false;
+    break;
+  case kCallbackPartial:
+    return false;
+    break;
+  case kCallbackLua:
+    return callback.data.luaref == LUA_NOREF;
+    break;
+  case kCallbackNone:
+    return true;
+    break;
+  }
+
+  return true;
 }
 
 /// Copy a callback into a typval_T.
@@ -1164,6 +1191,11 @@ void callback_put(Callback *cb, typval_T *tv)
     tv->vval.v_string = vim_strsave(cb->data.funcref);
     func_ref(cb->data.funcref);
     break;
+  case kCallbackLua:
+    // TODO(tjdevries): Unified Callback.
+    // At this point this isn't possible, but it'd be nice to put
+    // these handled more neatly in one place.
+    // So instead, we just do the default and put nil
   default:
     tv->v_type = VAR_SPECIAL;
     tv->vval.v_special = kSpecialVarNull;
@@ -1184,6 +1216,9 @@ void callback_copy(Callback *dest, Callback *src)
   case kCallbackFuncref:
     dest->data.funcref = vim_strsave(src->data.funcref);
     func_ref(src->data.funcref);
+    break;
+  case kCallbackLua:
+    dest->data.luaref = api_new_luaref(src->data.luaref);
     break;
   default:
     dest->data.funcref = NULL;

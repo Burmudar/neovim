@@ -326,16 +326,16 @@ EXTERN int want_garbage_collect INIT(= false);
 EXTERN int garbage_collect_at_exit INIT(= false);
 
 // Special values for current_SID.
-#define SID_MODELINE    -1      // when using a modeline
-#define SID_CMDARG      -2      // for "--cmd" argument
-#define SID_CARG        -3      // for "-c" argument
-#define SID_ENV         -4      // for sourcing environment variable
-#define SID_ERROR       -5      // option was reset because of an error
-#define SID_NONE        -6      // don't set scriptID
-#define SID_WINLAYOUT   -7      // changing window size
-#define SID_LUA         -8      // for Lua scripts/chunks
-#define SID_API_CLIENT  -9      // for API clients
-#define SID_STR         -10     // for sourcing a string with no script item
+#define SID_MODELINE    (-1)      // when using a modeline
+#define SID_CMDARG      (-2)      // for "--cmd" argument
+#define SID_CARG        (-3)      // for "-c" argument
+#define SID_ENV         (-4)      // for sourcing environment variable
+#define SID_ERROR       (-5)      // option was reset because of an error
+#define SID_NONE        (-6)      // don't set scriptID
+#define SID_WINLAYOUT   (-7)      // changing window size
+#define SID_LUA         (-8)      // for Lua scripts/chunks
+#define SID_API_CLIENT  (-9)      // for API clients
+#define SID_STR         (-10)     // for sourcing a string with no script item
 
 // Script CTX being sourced or was sourced to define the current function.
 EXTERN sctx_T current_sctx INIT(= { 0 COMMA 0 COMMA 0 });
@@ -979,6 +979,7 @@ EXTERN char e_invalidreg[] INIT(= N_("E850: Invalid register name"));
 EXTERN char e_dirnotf[] INIT(= N_("E919: Directory not found in '%s': \"%s\""));
 EXTERN char e_au_recursive[] INIT(= N_("E952: Autocommand caused recursive behavior"));
 EXTERN char e_autocmd_close[] INIT(= N_("E813: Cannot close autocmd window"));
+EXTERN char e_listarg[] INIT(= N_("E686: Argument of %s must be a List"));
 EXTERN char e_unsupportedoption[] INIT(= N_("E519: Option not supported"));
 EXTERN char e_fnametoolong[] INIT(= N_("E856: Filename too long"));
 EXTERN char e_float_as_string[] INIT(= N_("E806: using Float as a String"));
@@ -998,6 +999,10 @@ EXTERN char e_floatexchange[] INIT(= N_("E5602: Cannot exchange or rotate float"
 EXTERN char e_non_empty_string_required[] INIT(= N_("E1142: Non-empty string required"));
 
 EXTERN char e_cannot_define_autocommands_for_all_events[] INIT(= N_("E1155: Cannot define autocommands for ALL events"));
+
+EXTERN char e_resulting_text_too_long[] INIT(= N_("E1240: Resulting text too long"));
+
+EXTERN char e_line_number_out_of_range[] INIT(= N_("E1247: Line number out of range"));
 
 EXTERN char e_highlight_group_name_too_long[] INIT(= N_("E1249: Highlight group name too long"));
 

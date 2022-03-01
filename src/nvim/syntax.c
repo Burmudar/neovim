@@ -27,6 +27,7 @@
 #include "nvim/highlight.h"
 #include "nvim/indent_c.h"
 #include "nvim/keymap.h"
+#include "nvim/lua/executor.h"
 #include "nvim/macros.h"
 #include "nvim/mbyte.h"
 #include "nvim/memline.h"
@@ -3112,9 +3113,9 @@ static void syn_cmd_conceal(exarg_T *eap, int syncing)
   next = skiptowhite(arg);
   if (*arg == NUL) {
     if (curwin->w_s->b_syn_conceal) {
-      msg(_("syntax conceal on"));
+      msg("syntax conceal on");
     } else {
-      msg(_("syntax conceal off"));
+      msg("syntax conceal off");
     }
   } else if (STRNICMP(arg, "on", 2) == 0 && next - arg == 2) {
     curwin->w_s->b_syn_conceal = true;
@@ -3141,9 +3142,9 @@ static void syn_cmd_case(exarg_T *eap, int syncing)
   next = skiptowhite(arg);
   if (*arg == NUL) {
     if (curwin->w_s->b_syn_ic) {
-      msg(_("syntax case ignore"));
+      msg("syntax case ignore");
     } else {
-      msg(_("syntax case match"));
+      msg("syntax case match");
     }
   } else if (STRNICMP(arg, "match", 5) == 0 && next - arg == 5) {
     curwin->w_s->b_syn_ic = false;
@@ -3168,9 +3169,9 @@ static void syn_cmd_foldlevel(exarg_T *eap, int syncing)
   if (*arg == NUL) {
     switch (curwin->w_s->b_syn_foldlevel) {
     case SYNFLD_START:
-      msg(_("syntax foldlevel start"));   break;
+      msg("syntax foldlevel start");   break;
     case SYNFLD_MINIMUM:
-      msg(_("syntax foldlevel minimum")); break;
+      msg("syntax foldlevel minimum"); break;
     default:
       break;
     }
@@ -3209,11 +3210,11 @@ static void syn_cmd_spell(exarg_T *eap, int syncing)
   next = skiptowhite(arg);
   if (*arg == NUL) {
     if (curwin->w_s->b_syn_spell == SYNSPL_TOP) {
-      msg(_("syntax spell toplevel"));
+      msg("syntax spell toplevel");
     } else if (curwin->w_s->b_syn_spell == SYNSPL_NOTOP) {
-      msg(_("syntax spell notoplevel"));
+      msg("syntax spell notoplevel");
     } else {
-      msg(_("syntax spell default"));
+      msg("syntax spell default");
     }
   } else if (STRNICMP(arg, "toplevel", 8) == 0 && next - arg == 8) {
     curwin->w_s->b_syn_spell = SYNSPL_TOP;
@@ -3245,7 +3246,7 @@ static void syn_cmd_iskeyword(exarg_T *eap, int syncing)
   if (*arg == NUL) {
     msg_puts("\n");
     if (curwin->w_s->b_syn_isk != empty_option) {
-      msg_puts(_("syntax iskeyword "));
+      msg_puts("syntax iskeyword ");
       msg_outtrans(curwin->w_s->b_syn_isk);
     } else {
       msg_outtrans((char_u *)_("syntax iskeyword not set"));
@@ -6758,16 +6759,26 @@ void set_hl_group(int id, HlAttrs attrs, Dict(highlight) *dict, int link_id)
     { NULL, -1, NIL },
   };
 
+  char hex_name[8];
+  char *name;
+
   for (int j = 0; cattrs[j].dest; j++) {
-    if (cattrs[j].val != -1) {
+    if (cattrs[j].val < 0) {
+      XFREE_CLEAR(*cattrs[j].dest);
+      continue;
+    }
+
+    if (cattrs[j].name.type == kObjectTypeString && cattrs[j].name.data.string.size) {
+      name = cattrs[j].name.data.string.data;
+    } else {
+      snprintf(hex_name, sizeof(hex_name), "#%06x", cattrs[j].val);
+      name = hex_name;
+    }
+
+    if (!*cattrs[j].dest
+        || STRCMP(*cattrs[j].dest, name) != 0) {
       xfree(*cattrs[j].dest);
-      if (cattrs[j].name.type == kObjectTypeString && cattrs[j].name.data.string.size) {
-        *cattrs[j].dest = xstrdup(cattrs[j].name.data.string.data);
-      } else {
-        char hex_name[8];
-        snprintf(hex_name, sizeof(hex_name), "#%06x", cattrs[j].val);
-        *cattrs[j].dest = xstrdup(hex_name);
-      }
+      *cattrs[j].dest = xstrdup(name);
     }
   }
 
@@ -6909,6 +6920,7 @@ void do_highlight(const char *line, const bool forceit, const bool init)
         hlgroup->sg_deflink = to_id;
         hlgroup->sg_deflink_sctx = current_sctx;
         hlgroup->sg_deflink_sctx.sc_lnum += sourcing_lnum;
+        nlua_set_sctx(&hlgroup->sg_deflink_sctx);
       }
     }
 
@@ -6929,6 +6941,7 @@ void do_highlight(const char *line, const bool forceit, const bool init)
         hlgroup->sg_link = to_id;
         hlgroup->sg_script_ctx = current_sctx;
         hlgroup->sg_script_ctx.sc_lnum += sourcing_lnum;
+        nlua_set_sctx(&hlgroup->sg_script_ctx);
         hlgroup->sg_cleared = false;
         redraw_all_later(SOME_VALID);
 
@@ -7309,6 +7322,7 @@ void do_highlight(const char *line, const bool forceit, const bool init)
     }
     HL_TABLE()[idx].sg_script_ctx = current_sctx;
     HL_TABLE()[idx].sg_script_ctx.sc_lnum += sourcing_lnum;
+    nlua_set_sctx(&HL_TABLE()[idx].sg_script_ctx);
   }
   xfree(key);
   xfree(arg);
@@ -8849,6 +8863,22 @@ RgbValue name_to_color(const char *name)
   return -1;
 }
 
+int name_to_ctermcolor(const char *name)
+{
+  int i;
+  int off = TOUPPER_ASC(*name);
+  for (i = ARRAY_SIZE(color_names); --i >= 0;) {
+    if (off == color_names[i][0]
+        && STRICMP(name+1, color_names[i]+1) == 0) {
+      break;
+    }
+  }
+  if (i < 0) {
+    return -1;
+  }
+  TriState bold = kNone;
+  return lookup_color(i, false, &bold);
+}
 
 /**************************************
 *  End of Highlighting stuff          *
