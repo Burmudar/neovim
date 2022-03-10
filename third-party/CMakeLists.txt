@@ -144,8 +144,8 @@ endif()
 
 include(ExternalProject)
 
-set(LIBUV_URL https://github.com/libuv/libuv/archive/7ae0c9543d0080968766288c73874aee3798ae30.tar.gz)
-set(LIBUV_SHA256 02ade646f52221e56f2515f8d0bfb8099204d21f6973b2a139bc726807ea803c)
+set(LIBUV_URL https://github.com/libuv/libuv/archive/v1.44.0.tar.gz)
+set(LIBUV_SHA256 f2482d547009d26d4d590ed6588043c540e707c833df52536744cb9a809e6617)
 
 set(MSGPACK_URL https://github.com/msgpack/msgpack-c/releases/download/cpp-3.0.0/msgpack-3.0.0.tar.gz)
 set(MSGPACK_SHA256 bfbb71b7c02f806393bc3cbc491b40523b89e64f83860c58e3e54af47de176e4)
@@ -203,8 +203,8 @@ set(LIBICONV_SHA256 ccf536620a45458d26ba83887a983b96827001e92a13847b45e4925cc891
 set(TREESITTER_C_URL https://github.com/tree-sitter/tree-sitter-c/archive/v0.20.1.tar.gz)
 set(TREESITTER_C_SHA256 ffcc2ef0eded59ad1acec9aec4f9b0c7dd209fc1a85d85f8b0e81298e3dddcc2)
 
-set(TREESITTER_URL https://github.com/tree-sitter/tree-sitter/archive/v0.20.3.tar.gz)
-set(TREESITTER_SHA256 ab52fe93e0c658cff656b9d10d67cdd29084247052964eba13ed6f0e9fa3bd36)
+set(TREESITTER_URL https://github.com/tree-sitter/tree-sitter/archive/v0.20.6.tar.gz)
+set(TREESITTER_SHA256 4d37eaef8a402a385998ff9aca3e1043b4a3bba899bceeff27a7178e1165b9de)
 
 if(USE_BUNDLED_UNIBILIUM)
   include(BuildUnibilium)

@@ -105,15 +105,24 @@ static char_u *old_termresponse = NULL;
 #define FOR_ALL_AUPATS_IN_EVENT(event, ap) \
   for (AutoPat *ap = first_autopat[event]; ap != NULL; ap = ap->next)  // NOLINT
 
-// Map of autocmd group names.
+// Map of autocmd group names and ids.
 //  name -> ID
-static Map(String, int) augroup_map = MAP_INIT;
+//  ID -> name
+static Map(String, int) map_augroup_name_to_id = MAP_INIT;
+static Map(int, String) map_augroup_id_to_name = MAP_INIT;
 
-static void augroup_map_del(char *name)
+static void augroup_map_del(int id, char *name)
 {
-  String key = map_key(String, int)(&augroup_map, cstr_as_string(name));
-  map_del(String, int)(&augroup_map, key);
-  api_free_string(key);
+  if (name != NULL) {
+    String key = map_key(String, int)(&map_augroup_name_to_id, cstr_as_string(name));
+    map_del(String, int)(&map_augroup_name_to_id, key);
+    api_free_string(key);
+  }
+  if (id > 0) {
+    String mapped = map_get(int, String)(&map_augroup_id_to_name, id);
+    api_free_string(mapped);
+    map_del(int, String)(&map_augroup_id_to_name, id);
+  }
 }
 
 
@@ -239,8 +248,7 @@ void aupat_del_for_event_and_group(event_T event, int group)
     }
   }
 
-  au_need_clean = true;
-  au_cleanup();  // may really delete removed patterns/commands now
+  au_cleanup();
 }
 
 // Mark all commands for a pattern for deletion.
@@ -383,12 +391,14 @@ int augroup_add(char *name)
   }
 
   if (existing_id == AUGROUP_DELETED) {
-    augroup_map_del(name);
+    augroup_map_del(existing_id, name);
   }
 
   int next_id = next_augroup_id++;
-  String name_copy = cstr_to_string(name);
-  map_put(String, int)(&augroup_map, name_copy, next_id);
+  String name_key = cstr_to_string(name);
+  String name_val = cstr_to_string(name);
+  map_put(String, int)(&map_augroup_name_to_id, name_key, next_id);
+  map_put(int, String)(&map_augroup_id_to_name, next_id, name_val);
 
   return next_id;
 }
@@ -417,7 +427,8 @@ void augroup_del(char *name, bool stupid_legacy_mode)
         FOR_ALL_AUPATS_IN_EVENT(event, ap) {
           if (ap->group == i && ap->pat != NULL) {
             give_warning((char_u *)_("W19: Deleting augroup that is still in use"), true);
-            map_put(String, int)(&augroup_map, cstr_as_string(name), AUGROUP_DELETED);
+            map_put(String, int)(&map_augroup_name_to_id, cstr_as_string(name), AUGROUP_DELETED);
+            augroup_map_del(ap->group, NULL);
             return;
           }
         }
@@ -433,7 +444,7 @@ void augroup_del(char *name, bool stupid_legacy_mode)
     }
 
     // Remove the group because it's not currently in use.
-    augroup_map_del(name);
+    augroup_map_del(i, name);
     au_cleanup();
   }
 }
@@ -446,7 +457,7 @@ void augroup_del(char *name, bool stupid_legacy_mode)
 int augroup_find(const char *name)
   FUNC_ATTR_PURE FUNC_ATTR_WARN_UNUSED_RESULT
 {
-  int existing_id = map_get(String, int)(&augroup_map, cstr_as_string((char *)name));
+  int existing_id = map_get(String, int)(&map_augroup_name_to_id, cstr_as_string((char *)name));
   if (existing_id == AUGROUP_DELETED) {
     return existing_id;
   }
@@ -488,13 +499,10 @@ char *augroup_name(int group)
     return NULL;
   }
 
-  String key;
-  int value;
-  map_foreach(&augroup_map, key, value, {
-    if (value == group) {
-      return key.data;
-    }
-  });
+  String key = map_get(int, String)(&map_augroup_id_to_name, group);
+  if (key.data != NULL) {
+    return key.data;
+  }
 
   // If it's not in the map anymore, then it must have been deleted.
   return (char *)get_deleted_augroup();
@@ -527,7 +535,7 @@ void do_augroup(char_u *arg, int del_group)
 
     String name;
     int value;
-    map_foreach(&augroup_map, name, value, {
+    map_foreach(&map_augroup_name_to_id, name, value, {
       if (value > 0) {
         msg_puts(name.data);
       } else {
@@ -552,16 +560,22 @@ void free_all_autocmds(void)
   }
 
   au_need_clean = true;
-  au_cleanup();  // may really delete removed patterns/commands now
+  au_cleanup();
 
   // Delete the augroup_map, including free the data
   String name;
   int id;
-  map_foreach(&augroup_map, name, id, {
+  map_foreach(&map_augroup_name_to_id, name, id, {
     (void)id;
     api_free_string(name);
   })
-  map_destroy(String, int)(&augroup_map);
+  map_destroy(String, int)(&map_augroup_name_to_id);
+
+  map_foreach(&map_augroup_id_to_name, id, name, {
+    (void)id;
+    api_free_string(name);
+  })
+  map_destroy(int, String)(&map_augroup_id_to_name);
 }
 #endif
 
@@ -887,7 +901,6 @@ int do_autocmd_event(event_T event, char_u *pat, bool once, int nested, char_u *
   while (patlen) {
     // detect special <buffer[=X]> buffer-local patterns
     is_buflocal = aupat_is_buflocal(pat, patlen);
-    buflocal_nr = 0;
 
     if (is_buflocal) {
       buflocal_nr = aupat_get_buflocal_nr(pat, patlen);
@@ -942,7 +955,7 @@ int do_autocmd_event(event_T event, char_u *pat, bool once, int nested, char_u *
     patlen = (int)aucmd_pattern_length(pat);
   }
 
-  au_cleanup();
+  au_cleanup();  // may really delete removed patterns/commands now
   return OK;
 }
 
@@ -2474,7 +2487,7 @@ bool aucmd_exec_is_deleted(AucmdExecutable acc)
   case CALLABLE_EX:
     return acc.callable.cmd == NULL;
   case CALLABLE_CB:
-    return callback_is_freed(acc.callable.cb);
+    return acc.callable.cb.type == kCallbackNone;
   case CALLABLE_NONE:
     return true;
   }
