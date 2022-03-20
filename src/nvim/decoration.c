@@ -5,10 +5,10 @@
 #include "nvim/decoration.h"
 #include "nvim/extmark.h"
 #include "nvim/highlight.h"
+#include "nvim/highlight_group.h"
 #include "nvim/lua/executor.h"
 #include "nvim/move.h"
 #include "nvim/screen.h"
-#include "nvim/syntax.h"
 #include "nvim/vim.h"
 
 #ifdef INCLUDE_GENERATED_DECLARATIONS
@@ -312,6 +312,10 @@ next_mark:
 
   int attr = 0;
   size_t j = 0;
+  bool conceal = 0;
+  int conceal_char = 0;
+  int conceal_attr = 0;
+
   for (size_t i = 0; i < kv_size(state->active); i++) {
     DecorRange item = kv_A(state->active, i);
     bool active = false, keep = true;
@@ -336,6 +340,14 @@ next_mark:
     if (active && item.attr_id > 0) {
       attr = hl_combine_attr(attr, item.attr_id);
     }
+    if (active && item.decor.conceal) {
+      conceal = true;
+      if (item.start_row == state->row && item.start_col == col && item.decor.conceal_char) {
+        conceal_char = item.decor.conceal_char;
+        state->col_until = MIN(state->col_until, item.start_col);
+        conceal_attr = item.attr_id;
+      }
+    }
     if ((item.start_row == state->row && item.start_col <= col)
         && kv_size(item.decor.virt_text)
         && item.decor.virt_text_pos == kVTOverlay && item.win_col == -1) {
@@ -349,6 +361,9 @@ next_mark:
   }
   kv_size(state->active) = j;
   state->current = attr;
+  state->conceal = conceal;
+  state->conceal_char = conceal_char;
+  state->conceal_attr = conceal_attr;
   return attr;
 }
 
@@ -522,59 +537,6 @@ void decor_add_ephemeral(int start_row, int start_col, int end_row, int end_col,
   decor_add(&decor_state, start_row, start_col, end_row, end_col, decor, true);
 }
 
-
-DecorProvider *get_decor_provider(NS ns_id, bool force)
-{
-  size_t i;
-  size_t len = kv_size(decor_providers);
-  for (i = 0; i < len; i++) {
-    DecorProvider *item = &kv_A(decor_providers, i);
-    if (item->ns_id == ns_id) {
-      return item;
-    } else if (item->ns_id > ns_id) {
-      break;
-    }
-  }
-
-  if (!force) {
-    return NULL;
-  }
-
-  // Adding a new provider, so allocate room in the vector
-  (void)kv_a(decor_providers, len);
-  if (i < len) {
-    // New ns_id needs to be inserted between existing providers to maintain
-    // ordering, so shift other providers with larger ns_id
-    memmove(&kv_A(decor_providers, i + 1),
-            &kv_A(decor_providers, i),
-            (len - i) * sizeof(kv_a(decor_providers, i)));
-  }
-  DecorProvider *item = &kv_a(decor_providers, i);
-  *item = DECORATION_PROVIDER_INIT(ns_id);
-
-  return item;
-}
-
-void decor_provider_clear(DecorProvider *p)
-{
-  if (p == NULL) {
-    return;
-  }
-  NLUA_CLEAR_REF(p->redraw_start);
-  NLUA_CLEAR_REF(p->redraw_buf);
-  NLUA_CLEAR_REF(p->redraw_win);
-  NLUA_CLEAR_REF(p->redraw_line);
-  NLUA_CLEAR_REF(p->redraw_end);
-  p->active = false;
-}
-
-void decor_free_all_mem(void)
-{
-  for (size_t i = 0; i < kv_size(decor_providers); i++) {
-    decor_provider_clear(&kv_A(decor_providers, i));
-  }
-  kv_destroy(decor_providers);
-}
 
 
 int decor_virt_lines(win_T *wp, linenr_T lnum, VirtLines *lines)
