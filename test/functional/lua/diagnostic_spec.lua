@@ -729,6 +729,19 @@ describe('vim.diagnostic', function()
         return vim.diagnostic.get_next_pos { namespace = diagnostic_ns }
       ]])
     end)
+
+    it('works with diagnostics before the start of the line', function()
+    eq({4, 0}, exec_lua [[
+    vim.diagnostic.set(diagnostic_ns, diagnostic_bufnr, {
+        make_error('Diagnostic #1', 3, 9001, 3, 9001),
+        make_error('Diagnostic #2', 4, -1, 4, -1),
+    })
+    vim.api.nvim_win_set_buf(0, diagnostic_bufnr)
+    vim.api.nvim_win_set_cursor(0, {1, 1})
+    vim.diagnostic.goto_next { float = false }
+    return vim.diagnostic.get_next_pos { namespace = diagnostic_ns }
+    ]])
+end)
   end)
 
   describe('get_prev_pos()', function()
@@ -1939,24 +1952,31 @@ describe('vim.diagnostic', function()
     end)
 
     it('triggers the autocommand when diagnostics are set', function()
-      eq(1, exec_lua [[
+      eq(true, exec_lua [[
+        -- Set a different buffer as current to test that <abuf> is being set properly in
+        -- DiagnosticChanged callbacks
+        local tmp = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_set_current_buf(tmp)
+
         vim.g.diagnostic_autocmd_triggered = 0
-        vim.cmd('autocmd DiagnosticChanged * let g:diagnostic_autocmd_triggered = 1')
+        vim.cmd('autocmd DiagnosticChanged * let g:diagnostic_autocmd_triggered = +expand("<abuf>")')
         vim.api.nvim_buf_set_name(diagnostic_bufnr, "test | test")
         vim.diagnostic.set(diagnostic_ns, diagnostic_bufnr, {
           make_error('Diagnostic', 0, 0, 0, 0)
         })
-        return vim.g.diagnostic_autocmd_triggered
+        return vim.g.diagnostic_autocmd_triggered == diagnostic_bufnr
       ]])
       end)
 
     it('triggers the autocommand when diagnostics are cleared', function()
-      eq(1, exec_lua [[
+      eq(true, exec_lua [[
+        local tmp = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_set_current_buf(tmp)
         vim.g.diagnostic_autocmd_triggered = 0
-        vim.cmd('autocmd DiagnosticChanged * let g:diagnostic_autocmd_triggered = 1')
+        vim.cmd('autocmd DiagnosticChanged * let g:diagnostic_autocmd_triggered = +expand("<abuf>")')
         vim.api.nvim_buf_set_name(diagnostic_bufnr, "test | test")
         vim.diagnostic.reset(diagnostic_ns, diagnostic_bufnr)
-        return vim.g.diagnostic_autocmd_triggered
+        return vim.g.diagnostic_autocmd_triggered == diagnostic_bufnr
       ]])
       end)
   end)

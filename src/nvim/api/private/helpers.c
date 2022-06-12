@@ -16,9 +16,9 @@
 #include "nvim/assert.h"
 #include "nvim/buffer.h"
 #include "nvim/charset.h"
-#include "nvim/decoration.h"
 #include "nvim/eval.h"
 #include "nvim/eval/typval.h"
+#include "nvim/ex_cmds_defs.h"
 #include "nvim/extmark.h"
 #include "nvim/fileio.h"
 #include "nvim/getchar.h"
@@ -31,8 +31,6 @@
 #include "nvim/memline.h"
 #include "nvim/memory.h"
 #include "nvim/msgpack_rpc/helpers.h"
-#include "nvim/option.h"
-#include "nvim/option_defs.h"
 #include "nvim/ui.h"
 #include "nvim/version.h"
 #include "nvim/vim.h"
@@ -261,152 +259,6 @@ Object dict_set_var(dict_T *dict, String key, Object value, bool del, bool retva
   return rv;
 }
 
-/// Gets the value of a global or local(buffer, window) option.
-///
-/// @param from If `type` is `SREQ_WIN` or `SREQ_BUF`, this must be a pointer
-///        to the window or buffer.
-/// @param type One of `SREQ_GLOBAL`, `SREQ_WIN` or `SREQ_BUF`
-/// @param name The option name
-/// @param[out] err Details of an error that may have occurred
-/// @return the option value
-Object get_option_from(void *from, int type, String name, Error *err)
-{
-  Object rv = OBJECT_INIT;
-
-  if (name.size == 0) {
-    api_set_error(err, kErrorTypeValidation, "Empty option name");
-    return rv;
-  }
-
-  // Return values
-  int64_t numval;
-  char *stringval = NULL;
-  int flags = get_option_value_strict(name.data, &numval, &stringval,
-                                      type, from);
-
-  if (!flags) {
-    api_set_error(err, kErrorTypeValidation, "Invalid option name: '%s'",
-                  name.data);
-    return rv;
-  }
-
-  if (flags & SOPT_BOOL) {
-    rv.type = kObjectTypeBoolean;
-    rv.data.boolean = numval ? true : false;
-  } else if (flags & SOPT_NUM) {
-    rv.type = kObjectTypeInteger;
-    rv.data.integer = numval;
-  } else if (flags & SOPT_STRING) {
-    if (stringval) {
-      rv.type = kObjectTypeString;
-      rv.data.string.data = stringval;
-      rv.data.string.size = strlen(stringval);
-    } else {
-      api_set_error(err, kErrorTypeException,
-                    "Failed to get value for option '%s'",
-                    name.data);
-    }
-  } else {
-    api_set_error(err,
-                  kErrorTypeException,
-                  "Unknown type for option '%s'",
-                  name.data);
-  }
-
-  return rv;
-}
-
-/// Sets the value of a global or local(buffer, window) option.
-///
-/// @param to If `type` is `SREQ_WIN` or `SREQ_BUF`, this must be a pointer
-///        to the window or buffer.
-/// @param type One of `SREQ_GLOBAL`, `SREQ_WIN` or `SREQ_BUF`
-/// @param name The option name
-/// @param[out] err Details of an error that may have occurred
-void set_option_to(uint64_t channel_id, void *to, int type, String name, Object value, Error *err)
-{
-  if (name.size == 0) {
-    api_set_error(err, kErrorTypeValidation, "Empty option name");
-    return;
-  }
-
-  int flags = get_option_value_strict(name.data, NULL, NULL, type, to);
-
-  if (flags == 0) {
-    api_set_error(err, kErrorTypeValidation, "Invalid option name '%s'",
-                  name.data);
-    return;
-  }
-
-  if (value.type == kObjectTypeNil) {
-    if (type == SREQ_GLOBAL) {
-      api_set_error(err, kErrorTypeException, "Cannot unset option '%s'",
-                    name.data);
-      return;
-    } else if (!(flags & SOPT_GLOBAL)) {
-      api_set_error(err,
-                    kErrorTypeException,
-                    "Cannot unset option '%s' "
-                    "because it doesn't have a global value",
-                    name.data);
-      return;
-    } else {
-      unset_global_local_option(name.data, to);
-      return;
-    }
-  }
-
-  int numval = 0;
-  char *stringval = NULL;
-
-  if (flags & SOPT_BOOL) {
-    if (value.type != kObjectTypeBoolean) {
-      api_set_error(err,
-                    kErrorTypeValidation,
-                    "Option '%s' requires a Boolean value",
-                    name.data);
-      return;
-    }
-
-    numval = value.data.boolean;
-  } else if (flags & SOPT_NUM) {
-    if (value.type != kObjectTypeInteger) {
-      api_set_error(err, kErrorTypeValidation,
-                    "Option '%s' requires an integer value",
-                    name.data);
-      return;
-    }
-
-    if (value.data.integer > INT_MAX || value.data.integer < INT_MIN) {
-      api_set_error(err, kErrorTypeValidation,
-                    "Value for option '%s' is out of range",
-                    name.data);
-      return;
-    }
-
-    numval = (int)value.data.integer;
-  } else {
-    if (value.type != kObjectTypeString) {
-      api_set_error(err, kErrorTypeValidation,
-                    "Option '%s' requires a string value",
-                    name.data);
-      return;
-    }
-
-    stringval = value.data.string.data;
-  }
-
-  WITH_SCRIPT_CONTEXT(channel_id, {
-    const int opt_flags = (type == SREQ_WIN && !(flags & SOPT_GLOBAL))
-                          ? 0 : (type == SREQ_GLOBAL)
-                                ? OPT_GLOBAL : OPT_LOCAL;
-
-    set_option_value_for(name.data, numval, stringval,
-                         opt_flags, type, to, err);
-  });
-}
-
-
 buf_T *find_buffer_by_handle(Buffer buffer, Error *err)
 {
   if (buffer == 0) {
@@ -486,6 +338,16 @@ String cstr_to_string(const char *str)
     .data = xmemdupz(str, len),
     .size = len,
   };
+}
+
+/// Copies a String to an allocated, NUL-terminated C string.
+///
+/// @param str the String to copy
+/// @return the resulting C string
+char *string_to_cstr(String str)
+  FUNC_ATTR_NONNULL_RET FUNC_ATTR_WARN_UNUSED_RESULT
+{
+  return xstrndup(str.data, str.size);
 }
 
 /// Copies buffer to an allocated String.
@@ -624,15 +486,15 @@ void modify_keymap(uint64_t channel_id, Buffer buffer, bool is_unmap, String mod
   }
   parsed_args.buffer = !global;
 
-  set_maparg_lhs_rhs((char_u *)lhs.data, lhs.size,
-                     (char_u *)rhs.data, rhs.size, lua_funcref,
+  set_maparg_lhs_rhs(lhs.data, lhs.size,
+                     rhs.data, rhs.size, lua_funcref,
                      CPO_TO_CPO_FLAGS, &parsed_args);
   if (opts != NULL && opts->desc.type == kObjectTypeString) {
-    parsed_args.desc = xstrdup(opts->desc.data.string.data);
+    parsed_args.desc = string_to_cstr(opts->desc.data.string);
   } else {
     parsed_args.desc = NULL;
   }
-  if (parsed_args.lhs_len > MAXMAPLEN) {
+  if (parsed_args.lhs_len > MAXMAPLEN || parsed_args.alt_lhs_len > MAXMAPLEN) {
     api_set_error(err, kErrorTypeValidation,  "LHS exceeds maximum map length: %s", lhs.data);
     goto fail_and_free;
   }
@@ -642,16 +504,15 @@ void modify_keymap(uint64_t channel_id, Buffer buffer, bool is_unmap, String mod
     goto fail_and_free;
   }
   int mode_val;  // integer value of the mapping mode, to be passed to do_map()
-  char_u *p = (char_u *)((mode.size) ? mode.data : "m");
+  char *p = (mode.size) ? mode.data : "m";
   if (STRNCMP(p, "!", 2) == 0) {
     mode_val = get_map_mode(&p, true);  // mapmode-ic
   } else {
     mode_val = get_map_mode(&p, false);
-    if ((mode_val == VISUAL + SELECTMODE + NORMAL + OP_PENDING)
-        && mode.size > 0) {
+    if (mode_val == (MODE_VISUAL | MODE_SELECT | MODE_NORMAL | MODE_OP_PENDING) && mode.size > 0) {
       // get_map_mode() treats unrecognized mode shortnames as ":map".
       // This is an error unless the given shortname was empty string "".
-      api_set_error(err, kErrorTypeValidation, "Invalid mode shortname: \"%s\"", (char *)p);
+      api_set_error(err, kErrorTypeValidation, "Invalid mode shortname: \"%s\"", p);
       goto fail_and_free;
     }
   }
@@ -669,11 +530,7 @@ void modify_keymap(uint64_t channel_id, Buffer buffer, bool is_unmap, String mod
     if (rhs.size == 0) {  // assume that the user wants RHS to be a <Nop>
       parsed_args.rhs_is_noop = true;
     } else {
-      // the given RHS was nonempty and not a <Nop>, but was parsed as if it
-      // were empty?
-      assert(false && "Failed to parse nonempty RHS!");
-      api_set_error(err, kErrorTypeValidation, "Parsing of nonempty RHS failed: %s", rhs.data);
-      goto fail_and_free;
+      abort();  // should never happen
     }
   } else if (is_unmap && (parsed_args.rhs_len || parsed_args.rhs_lua != LUA_NOREF)) {
     if (parsed_args.rhs_len) {
@@ -1030,60 +887,6 @@ Object copy_object(Object obj)
   }
 }
 
-static void set_option_value_for(char *key, int numval, char *stringval, int opt_flags,
-                                 int opt_type, void *from, Error *err)
-{
-  switchwin_T switchwin;
-  aco_save_T aco;
-
-  try_start();
-  switch (opt_type) {
-  case SREQ_WIN:
-    if (switch_win_noblock(&switchwin, (win_T *)from, win_find_tabpage((win_T *)from), true)
-        == FAIL) {
-      restore_win_noblock(&switchwin, true);
-      if (try_end(err)) {
-        return;
-      }
-      api_set_error(err,
-                    kErrorTypeException,
-                    "Problem while switching windows");
-      return;
-    }
-    set_option_value_err(key, numval, stringval, opt_flags, err);
-    restore_win_noblock(&switchwin, true);
-    break;
-  case SREQ_BUF:
-    aucmd_prepbuf(&aco, (buf_T *)from);
-    set_option_value_err(key, numval, stringval, opt_flags, err);
-    aucmd_restbuf(&aco);
-    break;
-  case SREQ_GLOBAL:
-    set_option_value_err(key, numval, stringval, opt_flags, err);
-    break;
-  }
-
-  if (ERROR_SET(err)) {
-    return;
-  }
-
-  try_end(err);
-}
-
-
-static void set_option_value_err(char *key, int numval, char *stringval, int opt_flags, Error *err)
-{
-  char *errmsg;
-
-  if ((errmsg = set_option_value(key, numval, stringval, opt_flags))) {
-    if (try_end(err)) {
-      return;
-    }
-
-    api_set_error(err, kErrorTypeException, "%s", errmsg);
-  }
-}
-
 void api_set_error(Error *err, ErrorType errType, const char *format, ...)
   FUNC_ATTR_NONNULL_ALL FUNC_ATTR_PRINTF(3, 4)
 {
@@ -1118,7 +921,7 @@ ArrayOf(Dictionary) keymap_array(String mode, buf_T *buf, bool from_lua)
 
   // Convert the string mode to the integer mode
   // that is stored within each mapblock
-  char_u *p = (char_u *)mode.data;
+  char *p = mode.data;
   int int_mode = get_map_mode(&p, 0);
 
   // Determine the desired buffer value
@@ -1128,6 +931,9 @@ ArrayOf(Dictionary) keymap_array(String mode, buf_T *buf, bool from_lua)
     for (const mapblock_T *current_maphash = get_maphash(i, buf);
          current_maphash;
          current_maphash = current_maphash->m_next) {
+      if (current_maphash->m_simplified) {
+        continue;
+      }
       // Check for correct mode
       if (int_mode & current_maphash->m_mode) {
         mapblock_fill_dict(dict, current_maphash, buffer_value, false);
@@ -1151,122 +957,6 @@ ArrayOf(Dictionary) keymap_array(String mode, buf_T *buf, bool from_lua)
   tv_dict_free(dict);
 
   return mappings;
-}
-
-/// Gets the line and column of an extmark.
-///
-/// Extmarks may be queried by position, name or even special names
-/// in the future such as "cursor".
-///
-/// @param[out] lnum extmark line
-/// @param[out] colnr extmark column
-///
-/// @return true if the extmark was found, else false
-bool extmark_get_index_from_obj(buf_T *buf, Integer ns_id, Object obj, int
-                                *row, colnr_T *col, Error *err)
-{
-  // Check if it is mark id
-  if (obj.type == kObjectTypeInteger) {
-    Integer id = obj.data.integer;
-    if (id == 0) {
-      *row = 0;
-      *col = 0;
-      return true;
-    } else if (id == -1) {
-      *row = MAXLNUM;
-      *col = MAXCOL;
-      return true;
-    } else if (id < 0) {
-      api_set_error(err, kErrorTypeValidation, "Mark id must be positive");
-      return false;
-    }
-
-    ExtmarkInfo extmark = extmark_from_id(buf, (uint32_t)ns_id, (uint32_t)id);
-    if (extmark.row >= 0) {
-      *row = extmark.row;
-      *col = extmark.col;
-      return true;
-    } else {
-      api_set_error(err, kErrorTypeValidation, "No mark with requested id");
-      return false;
-    }
-
-    // Check if it is a position
-  } else if (obj.type == kObjectTypeArray) {
-    Array pos = obj.data.array;
-    if (pos.size != 2
-        || pos.items[0].type != kObjectTypeInteger
-        || pos.items[1].type != kObjectTypeInteger) {
-      api_set_error(err, kErrorTypeValidation,
-                    "Position must have 2 integer elements");
-      return false;
-    }
-    Integer pos_row = pos.items[0].data.integer;
-    Integer pos_col = pos.items[1].data.integer;
-    *row = (int)(pos_row >= 0 ? pos_row  : MAXLNUM);
-    *col = (colnr_T)(pos_col >= 0 ? pos_col : MAXCOL);
-    return true;
-  } else {
-    api_set_error(err, kErrorTypeValidation,
-                  "Position must be a mark id Integer or position Array");
-    return false;
-  }
-}
-
-VirtText parse_virt_text(Array chunks, Error *err, int *width)
-{
-  VirtText virt_text = KV_INITIAL_VALUE;
-  int w = 0;
-  for (size_t i = 0; i < chunks.size; i++) {
-    if (chunks.items[i].type != kObjectTypeArray) {
-      api_set_error(err, kErrorTypeValidation, "Chunk is not an array");
-      goto free_exit;
-    }
-    Array chunk = chunks.items[i].data.array;
-    if (chunk.size == 0 || chunk.size > 2
-        || chunk.items[0].type != kObjectTypeString) {
-      api_set_error(err, kErrorTypeValidation,
-                    "Chunk is not an array with one or two strings");
-      goto free_exit;
-    }
-
-    String str = chunk.items[0].data.string;
-
-    int hl_id = 0;
-    if (chunk.size == 2) {
-      Object hl = chunk.items[1];
-      if (hl.type == kObjectTypeArray) {
-        Array arr = hl.data.array;
-        for (size_t j = 0; j < arr.size; j++) {
-          hl_id = object_to_hl_id(arr.items[j], "virt_text highlight", err);
-          if (ERROR_SET(err)) {
-            goto free_exit;
-          }
-          if (j < arr.size-1) {
-            kv_push(virt_text, ((VirtTextChunk){ .text = NULL,
-                                                 .hl_id = hl_id }));
-          }
-        }
-      } else {
-        hl_id = object_to_hl_id(hl, "virt_text highlight", err);
-        if (ERROR_SET(err)) {
-          goto free_exit;
-        }
-      }
-    }
-
-    char *text = transstr(str.size > 0 ? str.data : "", false);  // allocates
-    w += (int)mb_string2cells((char_u *)text);
-
-    kv_push(virt_text, ((VirtTextChunk){ .text = text, .hl_id = hl_id }));
-  }
-
-  *width = w;
-  return virt_text;
-
-free_exit:
-  clear_virttext(&virt_text);
-  return virt_text;
 }
 
 /// Force obj to bool.
@@ -1337,8 +1027,8 @@ HlMessage parse_hl_msg(Array chunks, Error *err)
   return hl_msg;
 
 free_exit:
-  clear_hl_msg(&hl_msg);
-  return hl_msg;
+  hl_msg_free(hl_msg);
+  return (HlMessage)KV_INITIAL_VALUE;
 }
 
 bool api_dict_to_keydict(void *rv, field_hash hashy, Dictionary dict, Error *err)
@@ -1390,7 +1080,8 @@ bool set_mark(buf_T *buf, String name, Integer line, Integer col, Error *err)
       return res;
     }
   }
-  pos_T pos = { line, (int)col, (int)col };
+  assert(INT32_MIN <= line && line <= INT32_MAX);
+  pos_T pos = { (linenr_T)line, (int)col, (int)col };
   res = setmark_pos(*name.data, &pos, buf->handle);
   if (!res) {
     if (deleting) {
@@ -1405,212 +1096,15 @@ bool set_mark(buf_T *buf, String name, Integer line, Integer col, Error *err)
 }
 
 /// Get default statusline highlight for window
-const char *get_default_stl_hl(win_T *wp)
+const char *get_default_stl_hl(win_T *wp, bool use_winbar)
 {
   if (wp == NULL) {
     return "TabLineFill";
-  } else if (wp == curwin) {
-    return "StatusLine";
+  } else if (use_winbar) {
+    return (wp == curwin) ? "WinBar" : "WinBarNC";
   } else {
-    return "StatusLineNC";
+    return (wp == curwin) ? "StatusLine" : "StatusLineNC";
   }
-}
-
-void add_user_command(String name, Object command, Dict(user_command) *opts, int flags, Error *err)
-{
-  uint32_t argt = 0;
-  long def = -1;
-  cmd_addr_T addr_type_arg = ADDR_NONE;
-  int compl = EXPAND_NOTHING;
-  char *compl_arg = NULL;
-  char *rep = NULL;
-  LuaRef luaref = LUA_NOREF;
-  LuaRef compl_luaref = LUA_NOREF;
-
-  if (!uc_validate_name(name.data)) {
-    api_set_error(err, kErrorTypeValidation, "Invalid command name");
-    goto err;
-  }
-
-  if (mb_islower(name.data[0])) {
-    api_set_error(err, kErrorTypeValidation, "'name' must begin with an uppercase letter");
-    goto err;
-  }
-
-  if (HAS_KEY(opts->range) && HAS_KEY(opts->count)) {
-    api_set_error(err, kErrorTypeValidation, "'range' and 'count' are mutually exclusive");
-    goto err;
-  }
-
-  if (opts->nargs.type == kObjectTypeInteger) {
-    switch (opts->nargs.data.integer) {
-    case 0:
-      // Default value, nothing to do
-      break;
-    case 1:
-      argt |= EX_EXTRA | EX_NOSPC | EX_NEEDARG;
-      break;
-    default:
-      api_set_error(err, kErrorTypeValidation, "Invalid value for 'nargs'");
-      goto err;
-    }
-  } else if (opts->nargs.type == kObjectTypeString) {
-    if (opts->nargs.data.string.size > 1) {
-      api_set_error(err, kErrorTypeValidation, "Invalid value for 'nargs'");
-      goto err;
-    }
-
-    switch (opts->nargs.data.string.data[0]) {
-    case '*':
-      argt |= EX_EXTRA;
-      break;
-    case '?':
-      argt |= EX_EXTRA | EX_NOSPC;
-      break;
-    case '+':
-      argt |= EX_EXTRA | EX_NEEDARG;
-      break;
-    default:
-      api_set_error(err, kErrorTypeValidation, "Invalid value for 'nargs'");
-      goto err;
-    }
-  } else if (HAS_KEY(opts->nargs)) {
-    api_set_error(err, kErrorTypeValidation, "Invalid value for 'nargs'");
-    goto err;
-  }
-
-  if (HAS_KEY(opts->complete) && !argt) {
-    api_set_error(err, kErrorTypeValidation, "'complete' used without 'nargs'");
-    goto err;
-  }
-
-  if (opts->range.type == kObjectTypeBoolean) {
-    if (opts->range.data.boolean) {
-      argt |= EX_RANGE;
-      addr_type_arg = ADDR_LINES;
-    }
-  } else if (opts->range.type == kObjectTypeString) {
-    if (opts->range.data.string.data[0] == '%' && opts->range.data.string.size == 1) {
-      argt |= EX_RANGE | EX_DFLALL;
-      addr_type_arg = ADDR_LINES;
-    } else {
-      api_set_error(err, kErrorTypeValidation, "Invalid value for 'range'");
-      goto err;
-    }
-  } else if (opts->range.type == kObjectTypeInteger) {
-    argt |= EX_RANGE | EX_ZEROR;
-    def = opts->range.data.integer;
-    addr_type_arg = ADDR_LINES;
-  } else if (HAS_KEY(opts->range)) {
-    api_set_error(err, kErrorTypeValidation, "Invalid value for 'range'");
-    goto err;
-  }
-
-  if (opts->count.type == kObjectTypeBoolean) {
-    if (opts->count.data.boolean) {
-      argt |= EX_COUNT | EX_ZEROR | EX_RANGE;
-      addr_type_arg = ADDR_OTHER;
-      def = 0;
-    }
-  } else if (opts->count.type == kObjectTypeInteger) {
-    argt |= EX_COUNT | EX_ZEROR | EX_RANGE;
-    addr_type_arg = ADDR_OTHER;
-    def = opts->count.data.integer;
-  } else if (HAS_KEY(opts->count)) {
-    api_set_error(err, kErrorTypeValidation, "Invalid value for 'count'");
-    goto err;
-  }
-
-  if (opts->addr.type == kObjectTypeString) {
-    if (parse_addr_type_arg((char_u *)opts->addr.data.string.data, (int)opts->addr.data.string.size,
-                            &addr_type_arg) != OK) {
-      api_set_error(err, kErrorTypeValidation, "Invalid value for 'addr'");
-      goto err;
-    }
-
-    if (addr_type_arg != ADDR_LINES) {
-      argt |= EX_ZEROR;
-    }
-  } else if (HAS_KEY(opts->addr)) {
-    api_set_error(err, kErrorTypeValidation, "Invalid value for 'addr'");
-    goto err;
-  }
-
-  if (api_object_to_bool(opts->bang, "bang", false, err)) {
-    argt |= EX_BANG;
-  } else if (ERROR_SET(err)) {
-    goto err;
-  }
-
-  if (api_object_to_bool(opts->bar, "bar", false, err)) {
-    argt |= EX_TRLBAR;
-  } else if (ERROR_SET(err)) {
-    goto err;
-  }
-
-
-  if (api_object_to_bool(opts->register_, "register", false, err)) {
-    argt |= EX_REGSTR;
-  } else if (ERROR_SET(err)) {
-    goto err;
-  }
-
-  if (api_object_to_bool(opts->keepscript, "keepscript", false, err)) {
-    argt |= EX_KEEPSCRIPT;
-  } else if (ERROR_SET(err)) {
-    goto err;
-  }
-
-  bool force = api_object_to_bool(opts->force, "force", true, err);
-  if (ERROR_SET(err)) {
-    goto err;
-  }
-
-  if (opts->complete.type == kObjectTypeLuaRef) {
-    compl = EXPAND_USER_LUA;
-    compl_luaref = api_new_luaref(opts->complete.data.luaref);
-  } else if (opts->complete.type == kObjectTypeString) {
-    if (parse_compl_arg((char_u *)opts->complete.data.string.data,
-                        (int)opts->complete.data.string.size, &compl, &argt,
-                        (char_u **)&compl_arg) != OK) {
-      api_set_error(err, kErrorTypeValidation, "Invalid value for 'complete'");
-      goto err;
-    }
-  } else if (HAS_KEY(opts->complete)) {
-    api_set_error(err, kErrorTypeValidation, "Invalid value for 'complete'");
-    goto err;
-  }
-
-  switch (command.type) {
-  case kObjectTypeLuaRef:
-    luaref = api_new_luaref(command.data.luaref);
-    if (opts->desc.type == kObjectTypeString) {
-      rep = opts->desc.data.string.data;
-    } else {
-      snprintf((char *)IObuff, IOSIZE, "<Lua function %d>", luaref);
-      rep = (char *)IObuff;
-    }
-    break;
-  case kObjectTypeString:
-    rep = command.data.string.data;
-    break;
-  default:
-    api_set_error(err, kErrorTypeValidation, "'command' must be a string or Lua function");
-    goto err;
-  }
-
-  if (uc_add_command((char_u *)name.data, name.size, (char_u *)rep, argt, def, flags,
-                     compl, (char_u *)compl_arg, compl_luaref, addr_type_arg, luaref,
-                     force) != OK) {
-    api_set_error(err, kErrorTypeException, "Failed to create user command");
-    goto err;
-  }
-
-  return;
-
-err:
-  NLUA_CLEAR_REF(luaref);
-  NLUA_CLEAR_REF(compl_luaref);
 }
 
 int find_sid(uint64_t channel_id)
@@ -1641,40 +1135,4 @@ sctx_T api_set_sctx(uint64_t channel_id)
     current_sctx.sc_lnum = 0;
   }
   return old_current_sctx;
-}
-
-// adapted from sign.c:sign_define_init_text.
-// TODO(lewis6991): Consider merging
-int init_sign_text(char_u **sign_text, char_u *text)
-{
-  char_u *s;
-
-  char_u *endp = text + (int)STRLEN(text);
-
-  // Count cells and check for non-printable chars
-  int cells = 0;
-  for (s = text; s < endp; s += utfc_ptr2len(s)) {
-    if (!vim_isprintc(utf_ptr2char(s))) {
-      break;
-    }
-    cells += utf_ptr2cells(s);
-  }
-  // Currently must be empty, one or two display cells
-  if (s != endp || cells > 2) {
-    return FAIL;
-  }
-  if (cells < 1) {
-    return OK;
-  }
-
-  // Allocate one byte more if we need to pad up
-  // with a space.
-  size_t len = (size_t)(endp - text + ((cells == 1) ? 1 : 0));
-  *sign_text = vim_strnsave(text, len);
-
-  if (cells == 1) {
-    STRCPY(*sign_text + len - 1, " ");
-  }
-
-  return OK;
 }

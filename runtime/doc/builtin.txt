@@ -119,6 +119,10 @@ dictwatcherdel({dict}, {pattern}, {callback})
 did_filetype()			Number	|TRUE| if FileType autocommand event used
 diff_filler({lnum})		Number	diff filler lines about {lnum}
 diff_hlID({lnum}, {col})	Number	diff highlighting at {lnum}/{col}
+digraph_get({chars})		String	get the digraph of {chars}
+digraph_getlist([{listall}])	List	get all |digraph|s
+digraph_set({chars}, {digraph})	Boolean	register |digraph|
+digraph_setlist({digraphlist})	Boolean	register multiple |digraph|s
 empty({expr})			Number	|TRUE| if {expr} is empty
 environ()			Dict	return environment variables
 escape({string}, {chars})	String	escape {chars} in {string} with '\'
@@ -154,7 +158,6 @@ foldclosedend({lnum})		Number	last line of fold at {lnum} if closed
 foldlevel({lnum})		Number	fold level at {lnum}
 foldtext()			String	line displayed for closed fold
 foldtextresult({lnum})		String	text for closed fold at {lnum}
-foreground()			Number	bring the Vim window to the foreground
 fullcommand({name})		String	get full command from {name}
 funcref({name} [, {arglist}] [, {dict}])
 				Funcref	reference to function {name}
@@ -176,8 +179,12 @@ getcharmod()			Number	modifiers for the last typed character
 getcharpos({expr})		List	position of cursor, mark, etc.
 getcharsearch()			Dict	last character search
 getcharstr([expr])		String	get one character from the user
+getcmdcompltype()		String	return the type of the current
+					command-line completion
 getcmdline()			String	return the current command-line
 getcmdpos()			Number	return cursor position in command-line
+getcmdscreenpos()		Number	return cursor screen position in
+					command-line
 getcmdtype()			String	return current command-line type
 getcmdwintype()			String	return current command-line window type
 getcompletion({pat}, {type} [, {filtered}])
@@ -348,16 +355,6 @@ reg_recording()			String	get the recording register name
 reltime([{start} [, {end}]])	List	get time value
 reltimefloat({time})		Float	turn the time value into a Float
 reltimestr({time})		String	turn time value into a String
-remote_expr({server}, {string} [, {idvar} [, {timeout}]])
-				String	send expression
-remote_foreground({server})	Number	bring Vim server to the foreground
-remote_peek({serverid} [, {retvar}])
-				Number	check for reply string
-remote_read({serverid} [, {timeout}])
-				String	read reply string
-remote_send({server}, {string} [, {idvar}])
-				String	send key sequence
-remote_startserver({name})	none	become server {name}
 remove({list}, {idx} [, {end}])	any/List
 					remove items {idx}-{end} from {list}
 remove({blob}, {idx} [, {end}])	Number/Blob
@@ -391,8 +388,6 @@ searchpairpos({start}, {middle}, {end} [, {flags} [, {skip} [...]]])
 				List	search for other end of start/end pair
 searchpos({pattern} [, {flags} [, {stopline} [, {timeout} [, {skip}]]]])
 				List	search for {pattern}
-server2client({clientid}, {string})
-				Number	send reply string
 serverlist()			String	get a list of available servers
 setbufline({expr}, {lnum}, {text})
 				Number	set line {lnum} to {text} in buffer
@@ -587,6 +582,8 @@ acos({expr})							*acos()*
 		|Float| in the range of [0, pi].
 		{expr} must evaluate to a |Float| or a |Number| in the range
 		[-1, 1].
+		Returns NaN if {expr} is outside the range [-1, 1].  Returns
+ 		0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			:echo acos(0)
 <			1.570796 >
@@ -605,6 +602,7 @@ add({object}, {expr})					*add()*
 		item.  Use |extend()| to concatenate |Lists|.
 		When {object} is a |Blob| then {expr} must be a number.
 		Use |insert()| to add an item at another position.
+		Returns 1 if {object} is not a |List| or a |Blob|.
 
 		Can also be used as a |method|: >
 			mylist->add(val1)->add(val2)
@@ -702,11 +700,17 @@ argv([{nr} [, {winid}]])
 		The {winid} argument specifies the window ID, see |argc()|.
 		For the Vim command line arguments see |v:argv|.
 
+		Returns an empty string if {nr}th argument is not present in
+		the argument list.  Returns an empty List if the {winid}
+		argument is invalid.
+
 asin({expr})						*asin()*
 		Return the arc sine of {expr} measured in radians, as a |Float|
 		in the range of [-pi/2, pi/2].
 		{expr} must evaluate to a |Float| or a |Number| in the range
 		[-1, 1].
+		Returns NaN if {expr} is outside the range [-1, 1].  Returns
+		0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			:echo asin(0.8)
 <			0.927295 >
@@ -724,6 +728,7 @@ atan({expr})						*atan()*
 		Return the principal value of the arc tangent of {expr}, in
 		the range [-pi/2, +pi/2] radians, as a |Float|.
 		{expr} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			:echo atan(100)
 <			1.560797 >
@@ -737,6 +742,8 @@ atan2({expr1}, {expr2})					*atan2()*
 		Return the arc tangent of {expr1} / {expr2}, measured in
 		radians, as a |Float| in the range [-pi, pi].
 		{expr1} and {expr2} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr1} or {expr2} is not a |Float| or a
+		|Number|.
 		Examples: >
 			:echo atan2(-1, 1)
 <			-0.785398 >
@@ -782,7 +789,8 @@ bufadd({name})						*bufadd()*
 			let bufnr = bufadd('someName')
 			call bufload(bufnr)
 			call setbufline(bufnr, 1, ['some', 'text'])
-<		Can also be used as a |method|: >
+<		Returns 0 on error.
+		Can also be used as a |method|: >
 			let bufnr = 'somename'->bufadd()
 
 bufexists({buf})					*bufexists()*
@@ -924,6 +932,8 @@ byte2line({byte})					*byte2line()*
 		one.
 		Also see |line2byte()|, |go| and |:goto|.
 
+		Returns -1 if the {byte} value is invalid.
+
 		Can also be used as a |method|: >
 			GetOffset()->byte2line()
 
@@ -962,8 +972,6 @@ byteidxcomp({expr}, {nr})					*byteidxcomp()*
 <		The first and third echo result in 3 ('e' plus composing
 		character is 3 bytes), the second echo results in 1 ('e' is
 		one byte).
-		Only works differently from byteidx() when 'encoding' is set
-		to a Unicode encoding.
 
 		Can also be used as a |method|: >
 			GetName()->byteidxcomp(idx)
@@ -992,6 +1000,8 @@ ceil({expr})							*ceil()*
 			echo ceil(4.0)
 <			4.0
 
+		Returns 0.0 if {expr} is not a |Float| or a |Number|.
+
 		Can also be used as a |method|: >
 			Compute()->ceil()
 
@@ -1002,6 +1012,7 @@ changenr()						*changenr()*
 		When a change was made it is the number of that change.  After
 		redo it is the number of the redone change.  After undo it is
 		one less than the number of the undone change.
+		Returns 0 if the undo list is empty.
 
 chanclose({id} [, {stream}])				*chanclose()*
 		Close a channel or a specific stream associated with it.
@@ -1033,7 +1044,7 @@ chansend({id}, {data})					*chansend()*
 
 
 char2nr({string} [, {utf8}])					*char2nr()*
-		Return number value of the first char in {string}.
+		Return Number value of the first char in {string}.
 		Examples: >
 			char2nr(" ")		returns 32
 			char2nr("ABC")		returns 65
@@ -1044,6 +1055,8 @@ char2nr({string} [, {utf8}])					*char2nr()*
 		{utf8} is ignored, it exists only for backwards-compatibility.
 		A combining character is a separate character.
 		|nr2char()| does the opposite.
+
+		Returns 0 if {string} is not a |String|.
 
 		Can also be used as a |method|: >
 			GetChar()->char2nr()
@@ -1153,7 +1166,7 @@ col({expr})	The result is a Number, which is the byte index of the column
 			col("$")		length of cursor line plus one
 			col("'t")		column of mark t
 			col("'" .. markname)	column of mark markname
-<		The first column is 1.  0 is returned for an error.
+<		The first column is 1.  Returns 0 if {expr} is invalid.
 		For an uppercase mark the column may actually be in another
 		buffer.
 		For the cursor position, when 'virtualedit' is active, the
@@ -1271,6 +1284,8 @@ complete_info([{what}])				*complete_info()*
 		|pum_getpos()|. It's also available in |v:event| during the
 		|CompleteChanged| event.
 
+		Returns an empty |Dictionary| on error.
+
 		Examples: >
 			" Get all items
 			call complete_info()
@@ -1320,13 +1335,13 @@ confirm({msg} [, {choices} [, {default} [, {type}]]])
 
 		An example: >
 		   let choice = confirm("What do you want?",
-		   			\ "&Apples\n&Oranges\n&Bananas", 2)
+					\ "&Apples\n&Oranges\n&Bananas", 2)
 		   if choice == 0
-		   	echo "make up your mind!"
+			echo "make up your mind!"
 		   elseif choice == 3
-		   	echo "tasteful"
+			echo "tasteful"
 		   else
-		   	echo "I prefer bananas myself."
+			echo "I prefer bananas myself."
 		   endif
 <		In a GUI dialog, buttons are used.  The layout of the buttons
 		depends on the 'v' flag in 'guioptions'.  If it is included,
@@ -1353,6 +1368,7 @@ copy({expr})	Make a copy of {expr}.  For Numbers and Strings this isn't
 cos({expr})						*cos()*
 		Return the cosine of {expr}, measured in radians, as a |Float|.
 		{expr} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			:echo cos(100)
 <			0.862319 >
@@ -1366,6 +1382,7 @@ cosh({expr})						*cosh()*
 		Return the hyperbolic cosine of {expr} as a |Float| in the range
 		[1, inf].
 		{expr} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			:echo cosh(0.5)
 <			1.127626 >
@@ -1517,8 +1534,10 @@ deepcopy({expr} [, {noref}])				*deepcopy()* *E698*
 
 delete({fname} [, {flags}])				*delete()*
 		Without {flags} or with {flags} empty: Deletes the file by the
-		name {fname}.  This also works when {fname} is a symbolic link.
-		A symbolic link itself is deleted, not what it points to.
+		name {fname}.
+
+		This also works when {fname} is a symbolic link.  The symbolic
+		link itself is deleted, not what it points to.
 
 		When {flags} is "d": Deletes the directory by the name
 		{fname}.  This fails when directory {fname} is not empty.
@@ -1634,6 +1653,85 @@ diff_hlID({lnum}, {col})				*diff_hlID()*
 
 		Can also be used as a |method|: >
 			GetLnum()->diff_hlID(col)
+<
+
+digraph_get({chars})					*digraph_get()* *E1214*
+		Return the digraph of {chars}.  This should be a string with
+		exactly two characters.  If {chars} are not just two
+		characters, or the digraph of {chars} does not exist, an error
+		is given and an empty string is returned.
+
+		Also see |digraph_getlist()|.
+
+		Examples: >
+		" Get a built-in digraph
+		:echo digraph_get('00')		" Returns '∞'
+
+		" Get a user-defined digraph
+		:call digraph_set('aa', 'あ')
+		:echo digraph_get('aa')		" Returns 'あ'
+<
+		Can also be used as a |method|: >
+			GetChars()->digraph_get()
+<
+
+digraph_getlist([{listall}])				*digraph_getlist()*
+		Return a list of digraphs.  If the {listall} argument is given
+		and it is TRUE, return all digraphs, including the default
+		digraphs.  Otherwise, return only user-defined digraphs.
+
+		Also see |digraph_get()|.
+
+		Examples: >
+		" Get user-defined digraphs
+		:echo digraph_getlist()
+
+		" Get all the digraphs, including default digraphs
+		:echo digraph_getlist(1)
+<
+		Can also be used as a |method|: >
+			GetNumber()->digraph_getlist()
+<
+
+digraph_set({chars}, {digraph})				*digraph_set()*
+		Add digraph {chars} to the list.  {chars} must be a string
+		with two characters.  {digraph} is a string with one UTF-8
+		encoded character.  *E1215*
+		Be careful, composing characters are NOT ignored.  This
+		function is similar to |:digraphs| command, but useful to add
+		digraphs start with a white space.
+
+		The function result is v:true if |digraph| is registered.  If
+		this fails an error message is given and v:false is returned.
+
+		If you want to define multiple digraphs at once, you can use
+		|digraph_setlist()|.
+
+		Example: >
+			call digraph_set('  ', 'あ')
+<
+		Can be used as a |method|: >
+			GetString()->digraph_set('あ')
+<
+
+digraph_setlist({digraphlist})				*digraph_setlist()*
+		Similar to |digraph_set()| but this function can add multiple
+		digraphs at once.  {digraphlist} is a list composed of lists,
+		where each list contains two strings with {chars} and
+		{digraph} as in |digraph_set()|. *E1216*
+		Example: >
+		    call digraph_setlist([['aa', 'あ'], ['ii', 'い']])
+<
+		It is similar to the following: >
+		    for [chars, digraph] in [['aa', 'あ'], ['ii', 'い']]
+			  call digraph_set(chars, digraph)
+		    endfor
+<		Except that the function returns after the first error,
+		following digraphs will not be added.
+
+		Can be used as a |method|: >
+		    GetList()->digraph_setlist()
+<
 
 empty({expr})						*empty()*
 		Return the Number 1 if {expr} is empty, zero otherwise.
@@ -1726,7 +1824,7 @@ execute({command} [, {silent}])				*execute()*
 		`:redir`, error messages are dropped.
 
 		To get a list of lines use |split()| on the result: >
-			split(execute('args'), "\n")
+			execute('args')->split("\n")
 
 <		This function is not available in the |sandbox|.
 		Note: If nested, an outer execute() will not observe output of
@@ -1820,8 +1918,8 @@ exists({expr})	The result is a Number, which is |TRUE| if {expr} is
 <		There must be no space between the symbol (&/$/*/#) and the
 		name.
 		There must be no extra characters after the name, although in
-		a few cases this is ignored.  That may become more strict in
-		the future, thus don't count on it!
+		a few cases this is ignored.  That may become stricter in the
+		future, thus don't count on it!
 		Working example: >
 			exists(":make")
 <		NOT working example: >
@@ -1840,6 +1938,7 @@ exp({expr})						*exp()*
 		Return the exponential of {expr} as a |Float| in the range
 		[0, inf].
 		{expr} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			:echo exp(2)
 <			7.389056 >
@@ -1854,6 +1953,9 @@ debugbreak({pid})					*debugbreak()*
 		will cause process {pid} to get a SIGTRAP.  Behavior for other
 		processes is undefined. See |terminal-debugger|.
 		{Sends a SIGINT to a process {pid} other than MS-Windows}
+
+		Returns |TRUE| if successfully interrupted the program.
+		Otherwise returns |FALSE|.
 
 		Can also be used as a |method|: >
 			GetPid()->debugbreak()
@@ -1891,7 +1993,7 @@ expand({string} [, {nosuf} [, {list}]])				*expand()*
 			<cword>		word under the cursor
 			<cWORD>		WORD under the cursor
 			<client>	the {clientid} of the last received
-					message |server2client()|
+					message
 		Modifiers:
 			:p		expand to full path
 			:h		head (last path component removed)
@@ -1991,7 +2093,7 @@ extend({expr1}, {expr2} [, {expr3}])			*extend()*
 		{expr2} remains unchanged.
 		When {expr1} is locked and {expr2} is not empty the operation
 		fails.
-		Returns {expr1}.
+		Returns {expr1}.  Returns 0 on error.
 
 		Can also be used as a |method|: >
 			mylist->extend(otherlist)
@@ -2136,6 +2238,8 @@ finddir({name} [, {path} [, {count}]])				*finddir()*
 		{name} in {path} instead of the first one.
 		When {count} is negative return all the matches in a |List|.
 
+		Returns an empty string if the directory is not found.
+
 		This is quite similar to the ex-command `:find`.
 
 		Can also be used as a |method|: >
@@ -2178,6 +2282,7 @@ float2nr({expr})					*float2nr()*
 		Convert {expr} to a Number by omitting the part after the
 		decimal point.
 		{expr} must evaluate to a |Float| or a Number.
+		Returns 0 if {expr} is not a |Float| or a |Number|.
 		When the value of {expr} is out of range for a |Number| the
 		result is truncated to 0x7fffffff or -0x7fffffff (or when
 		64-bit Number support is enabled, 0x7fffffffffffffff or
@@ -2202,6 +2307,7 @@ floor({expr})							*floor()*
 		Return the largest integral value less than or equal to
 		{expr} as a |Float| (round down).
 		{expr} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr} is not a |Float| or a |Number|.
 		Examples: >
 			echo floor(1.856)
 <			1.0  >
@@ -2221,6 +2327,8 @@ fmod({expr1}, {expr2})					*fmod()*
 		the magnitude of {expr2}.  If {expr2} is zero, the value
 		returned is zero.  The value returned is a |Float|.
 		{expr1} and {expr2} must evaluate to a |Float| or a |Number|.
+		Returns 0.0 if {expr1} or {expr2} is not a |Float| or a
+		|Number|.
 		Examples: >
 			:echo fmod(12.33, 1.22)
 <			0.13 >
@@ -2239,6 +2347,7 @@ fnameescape({string})					*fnameescape()*
 		appears in a filename, it depends on the value of 'isfname'.
 		A leading '+' and '>' is also escaped (special after |:edit|
 		and |:write|).  And a "-" by itself (special after |:cd|).
+		Returns an empty string on error.
 		Example: >
 			:let fname = '+some str%nge|name'
 			:exe "edit " .. fnameescape(fname)
@@ -2256,7 +2365,8 @@ fnamemodify({fname}, {mods})				*fnamemodify()*
 			:echo fnamemodify("main.c", ":p:h")
 <		results in: >
 			/home/mool/vim/vim/src
-<		If {mods} is empty then {fname} is returned.
+<		If {mods} is empty or an unsupported modifier is used then
+		{fname} is returned.
 		Note: Environment variables don't work in {fname}, use
 		|expand()| first then.
 
@@ -2313,6 +2423,7 @@ foldtext()	Returns a String, to be displayed for a closed fold.  This is
 		When used to draw the actual foldtext, the rest of the line
 		will be filled with the fold char from the 'fillchars'
 		setting.
+		Returns an empty string when there is no fold.
 
 foldtextresult({lnum})					*foldtextresult()*
 		Returns the text that is displayed for the closed fold at line
@@ -2326,14 +2437,6 @@ foldtextresult({lnum})					*foldtextresult()*
 		Can also be used as a |method|: >
 			GetLnum()->foldtextresult()
 <
-							*foreground()*
-foreground()	Move the Vim window to the foreground.  Useful when sent from
-		a client to a Vim server. |remote_send()|
-		On Win32 systems this might not work, the OS does not always
-		allow a window to bring itself to the foreground.  Use
-		|remote_foreground()| instead.
-		{only in the Win32 GUI and console version}
-
 fullcommand({name})						*fullcommand()*
 		Get the full command name from a short abbreviated command
 		name; see |20.2| for details on command abbreviations.
@@ -2360,6 +2463,7 @@ funcref({name} [, {arglist}] [, {dict}])
 		been loaded (to avoid mistakenly loading the autoload script
 		when only intending to use the function name, use |function()|
 		instead). {name} cannot be a builtin function.
+		Returns 0 on error.
 
 		Can also be used as a |method|: >
 			GetFuncname()->funcref([arg])
@@ -2414,6 +2518,8 @@ function({name} [, {arglist}] [, {dict}])
 <		Invokes the function as with: >
 			call context.Callback('one', 500)
 <
+		Returns 0 on error.
+
 		Can also be used as a |method|: >
 			GetFuncname()->function([arg])
 
@@ -2461,6 +2567,7 @@ get({func}, {what})
 			"func"	The function
 			"dict"	The dictionary
 			"args"	The list with arguments
+		Returns zero on error.
 
 							*getbufinfo()*
 getbufinfo([{buf}])
@@ -2614,7 +2721,7 @@ getchar([expr])						*getchar()*
 
 		Without [expr] and when [expr] is 0 a whole character or
 		special key is returned.  If it is a single character, the
-		result is a number.  Use nr2char() to convert it to a String.
+		result is a Number.  Use |nr2char()| to convert it to a String.
 		Otherwise a String is returned with the encoded character.
 		For a special key it's a String with a sequence of bytes
 		starting with 0x80 (decimal: 128).  This is the same value as
@@ -2681,7 +2788,7 @@ getcharmod()						*getcharmod()*
 			128	command (Macintosh only)
 		Only the modifiers that have not been included in the
 		character itself are obtained.  Thus Shift-a results in "A"
-		without a modifier.
+		without a modifier.  Returns 0 if no modifiers are used.
 
 							*getcharpos()*
 getcharpos({expr})
@@ -2730,6 +2837,13 @@ getcharstr([expr])					*getcharstr()*
 		Otherwise this works like |getchar()|, except that a number
 		result is converted to a string.
 
+getcmdcompltype()					*getcmdcompltype()*
+		Return the type of the current command-line completion.
+		Only works when the command line is being edited, thus
+		requires use of |c_CTRL-\_e| or |c_CTRL-R_=|.
+		See |:command-completion| for the return string.
+		Also see |getcmdtype()|, |setcmdpos()| and |getcmdline()|.
+		Returns an empty string when completion is not defined.
 
 getcmdline()						*getcmdline()*
 		Return the current command-line.  Only works when the command
@@ -2748,6 +2862,15 @@ getcmdpos()						*getcmdpos()*
 		|c_CTRL-\_e| or |c_CTRL-R_=| or an expression mapping.
 		Returns 0 otherwise.
 		Also see |getcmdtype()|, |setcmdpos()| and |getcmdline()|.
+
+getcmdscreenpos()					*getcmdscreenpos()*
+		Return the screen position of the cursor in the command line
+		as a byte count.  The first column is 1.
+		Instead of |getcmdpos()|, it adds the prompt position.
+		Only works when editing the command line, thus requires use of
+		|c_CTRL-\_e| or |c_CTRL-R_=| or an expression mapping.
+		Returns 0 otherwise.
+		Also see |getcmdpos()|, |setcmdpos()|.
 
 getcmdtype()						*getcmdtype()*
 		Return the current command-line type. Possible return values
@@ -2985,7 +3108,8 @@ getjumplist([{winnr} [, {tabnr}]])			*getjumplist()*
 		With {winnr} only use this window in the current tab page.
 		{winnr} can also be a |window-ID|.
 		With {winnr} and {tabnr} use the window in the specified tab
-		page.
+		page.  If {winnr} or {tabnr} is invalid, an empty list is
+ 		returned.
 
 		The returned list contains two entries: a list with the jump
 		locations and the last used jump position number in the list.
@@ -3066,7 +3190,8 @@ getmarklist([{buf}])					*getmarklist()*
 
 		If the optional {buf} argument is specified, returns the
 		local marks defined in buffer {buf}.  For the use of {buf},
-		see |bufname()|.
+		see |bufname()|.  If {buf} is invalid, an empty list is
+		returned.
 
 		Each item in the returned List is a |Dict| with the following:
 		    mark   name of the mark prefixed by "'"
@@ -3088,7 +3213,8 @@ getmatches([{win}])					*getmatches()*
 		as |setmatches()| can restore a list of matches saved by
 		|getmatches()|.
 		If {win} is specified, use the window with this number or
-		window ID instead of the current window.
+		window ID instead of the current window.  If {win} is invalid,
+		an empty list is returned.
 		Example: >
 			:echo getmatches()
 <			[{'group': 'MyGroup1', 'pattern': 'TODO',
@@ -3160,6 +3286,7 @@ getpos({expr})	Get the position for String {expr}.  For possible values of
 		use |getcharpos()|.
 		The column number can be very large, e.g. 2147483647, in which
 		case it means "after the end of the line".
+		If {expr} is invalid, returns a list with all zeros.
 		This can be used to save and restore the position of a mark: >
 			let save_a_mark = getpos("'a")
 			...
@@ -4197,6 +4324,15 @@ jobstart({cmd} [, {opts}])				*jobstart()*
 		    by CommandLineToArgvW https://msdn.microsoft.com/bb776391
 		    unless cmd[0] is some form of "cmd.exe".
 
+							*jobstart-env*
+		The job environment is initialized as follows:
+		  $NVIM                is set to |v:servername| of the parent Nvim
+		  $NVIM_LISTEN_ADDRESS is unset
+		  $NVIM_LOG_FILE       is unset
+		  $VIM                 is unset
+		  $VIMRUNTIME          is unset
+		You can set these with the `env` option.
+
 							*jobstart-options*
 		{opts} is a dictionary with these keys:
 		  clear_env:  (boolean) `env` defines the job environment
@@ -4207,8 +4343,8 @@ jobstart({cmd} [, {opts}])				*jobstart()*
 			      killed when Nvim exits. If the process exits
 			      before Nvim, `on_exit` will be invoked.
 		  env:	      (dict) Map of environment variable name:value
-			      pairs extending (or replacing if |clear_env|)
-			      the current environment.
+			      pairs extending (or replacing with |clear_env|)
+			      the current environment. |jobstart-env|
 		  height:     (number) Height of the `pty` terminal.
 		  |on_exit|:    (function) Callback invoked when the job exits.
 		  |on_stdout|:  (function) Callback invoked when the job emits
@@ -4222,8 +4358,8 @@ jobstart({cmd} [, {opts}])				*jobstart()*
 			      platforms, this option is silently ignored.)
 		  pty:	      (boolean) Connect the job to a new pseudo
 			      terminal, and its streams to the master file
-			      descriptor. Then  `on_stderr` is ignored,
-			      `on_stdout` receives all output.
+			      descriptor. `on_stdout` receives all output,
+			      `on_stderr` is ignored. |terminal-start|
 		  rpc:	      (boolean) Use |msgpack-rpc| to communicate with
 			      the job over stdio. Then `on_stdout` is ignored,
 			      but `on_stderr` can still be used.
@@ -4885,14 +5021,13 @@ matchfuzzy({list}, {str} [, {dict}])			*matchfuzzy()*
 
 		The optional {dict} argument always supports the following
 		items:
-		    matchseq	When this item is present and {str} contains
-				multiple words separated by white space, then
-				returns only matches that contain the words in
-				the given sequence.
+		    matchseq	When this item is present return only matches
+				that contain the characters in {str} in the
+				given sequence.
 
 		If {list} is a list of dictionaries, then the optional {dict}
 		argument supports the following additional items:
-		    key		key of the item which is fuzzy matched against
+		    key		Key of the item which is fuzzy matched against
 				{str}. The value of this item should be a
 				string.
 		    text_cb	|Funcref| that will be called for every item
@@ -4900,6 +5035,8 @@ matchfuzzy({list}, {str} [, {dict}])			*matchfuzzy()*
 				This should accept a dictionary item as the
 				argument and return the text for that item to
 				use for fuzzy matching.
+		    limit	Maximum number of matches in {list} to be
+				returned.  Zero means no limit.
 
 		{str} is treated as a literal string and regular expression
 		matching is NOT supported.  The maximum supported {str} length
@@ -4911,6 +5048,9 @@ matchfuzzy({list}, {str} [, {dict}])			*matchfuzzy()*
 		If there are no matching strings or there is an error, then an
 		empty list is returned. If length of {str} is greater than
 		256, then returns an empty list.
+
+		When {limit} is given, matchfuzzy() will find up to this
+		number of matches in {list} and return them in sorted order.
 
 		Refer to |fuzzy-matching| for more information about fuzzy
 		matching strings.
@@ -5154,9 +5294,8 @@ mode([expr])	Return a string that indicates the current mode.
 		   !	    Shell or external command is executing
 		   t	    Terminal mode: keys go to the job
 
-		This is useful in the 'statusline' option or when used
-		with |remote_expr()| In most other places it always returns
-		"c" or "n".
+		This is useful in the 'statusline' option or RPC calls. In
+		most other places it always returns "c" or "n".
 		Note that in the future more modes and more specific modes may
 		be added. It's better not to compare the whole string but only
 		the leading character(s).
@@ -5376,8 +5515,10 @@ printf({fmt}, {expr1} ...)				*printf()*
 		When used as a |method| the base is passed as the second
 		argument: >
 			Compute()->printf("result: %d")
+<
+		You can use `call()` to pass the items as a list.
 
-<		Often used items are:
+		Often used items are:
 		  %s	string
 		  %6S	string right-aligned in 6 display cells
 		  %6s	string right-aligned in 6 bytes
@@ -5874,107 +6015,6 @@ reltimestr({time})				*reltimestr()*
 		Can also be used as a |method|: >
 			reltime(start)->reltimestr()
 <
-							*remote_expr()* *E449*
-remote_expr({server}, {string} [, {idvar} [, {timeout}]])
-		Send the {string} to {server}.  The {server} argument is a
-		string, also see |{server}|.
-
-		The string is sent as an expression and the result is returned
-		after evaluation.  The result must be a String or a |List|.  A
-		|List| is turned into a String by joining the items with a
-		line break in between (not at the end), like with join(expr,
-		"\n").
-
-		If {idvar} is present and not empty, it is taken as the name
-		of a variable and a {serverid} for later use with
-		|remote_read()| is stored there.
-
-		If {timeout} is given the read times out after this many
-		seconds.  Otherwise a timeout of 600 seconds is used.
-
-		See also |clientserver| |RemoteReply|.
-		This function is not available in the |sandbox|.
-		Note: Any errors will cause a local error message to be issued
-		and the result will be the empty string.
-
-		Variables will be evaluated in the global namespace,
-		independent of a function currently being active.  Except
-		when in debug mode, then local function variables and
-		arguments can be evaluated.
-
-		Examples: >
-			:echo remote_expr("gvim", "2+2")
-			:echo remote_expr("gvim1", "b:current_syntax")
-<
-
-remote_foreground({server})				*remote_foreground()*
-		Move the Vim server with the name {server} to the foreground.
-		The {server} argument is a string, also see |{server}|.
-		This works like: >
-			remote_expr({server}, "foreground()")
-<		Except that on Win32 systems the client does the work, to work
-		around the problem that the OS doesn't always allow the server
-		to bring itself to the foreground.
-		Note: This does not restore the window if it was minimized,
-		like foreground() does.
-		This function is not available in the |sandbox|.
-		{only in the Win32 GUI and the Win32 console version}
-
-
-remote_peek({serverid} [, {retvar}])		*remote_peek()*
-		Returns a positive number if there are available strings
-		from {serverid}.  Copies any reply string into the variable
-		{retvar} if specified.  {retvar} must be a string with the
-		name of a variable.
-		Returns zero if none are available.
-		Returns -1 if something is wrong.
-		See also |clientserver|.
-		This function is not available in the |sandbox|.
-		Examples: >
-			:let repl = ""
-			:echo "PEEK: " .. remote_peek(id, "repl") .. ": " .. repl
-
-remote_read({serverid}, [{timeout}])			*remote_read()*
-		Return the oldest available reply from {serverid} and consume
-		it.  Unless a {timeout} in seconds is given, it blocks until a
-		reply is available.
-		See also |clientserver|.
-		This function is not available in the |sandbox|.
-		Example: >
-			:echo remote_read(id)
-<
-							*remote_send()* *E241*
-remote_send({server}, {string} [, {idvar}])
-		Send the {string} to {server}.  The {server} argument is a
-		string, also see |{server}|.
-
-		The string is sent as input keys and the function returns
-		immediately.  At the Vim server the keys are not mapped
-		|:map|.
-
-		If {idvar} is present, it is taken as the name of a variable
-		and a {serverid} for later use with remote_read() is stored
-		there.
-
-		See also |clientserver| |RemoteReply|.
-		This function is not available in the |sandbox|.
-
-		Note: Any errors will be reported in the server and may mess
-		up the display.
-		Examples: >
-		:echo remote_send("gvim", ":DropAndReply " .. file, "serverid") ..
-		 \ remote_read(serverid)
-
-		:autocmd NONE RemoteReply *
-		 \ echo remote_read(expand("<amatch>"))
-		:echo remote_send("gvim", ":sleep 10 | echo " ..
-		 \ 'server2client(expand("<client>"), "HELLO")<CR>')
-<
-					*remote_startserver()* *E941* *E942*
-remote_startserver({name})
-		Become the server {name}.  This fails if already running as a
-		server, when |v:servername| is not empty.
-
 remove({list}, {idx} [, {end}])				*remove()*
 		Without {end}: Remove the item at {idx} from |List| {list} and
 		return the item.
@@ -6558,21 +6598,6 @@ searchpos({pattern} [, {flags} [, {stopline} [, {timeout} [, {skip}]]]])
 		Can also be used as a |method|: >
 			GetPattern()->searchpos()
 
-server2client({clientid}, {string})			*server2client()*
-		Send a reply string to {clientid}.  The most recent {clientid}
-		that sent a string can be retrieved with expand("<client>").
-		Note:
-		Returns zero for success, -1 for failure.
-		This id has to be stored before the next command can be
-		received.  I.e. before returning from the received command and
-		before calling any commands that waits for input.
-		See also |clientserver|.
-		Example: >
-			:echo server2client(expand("<client>"), "HELLO")
-
-<		Can also be used as a |method|: >
-			GetClientId()->server2client(string)
-<
 serverlist()						*serverlist()*
 		Returns a list of server addresses, or empty if all servers
 		were stopped. |serverstart()| |serverstop()|
@@ -6582,7 +6607,9 @@ serverlist()						*serverlist()*
 serverstart([{address}])				*serverstart()*
 		Opens a socket or named pipe at {address} and listens for
 		|RPC| messages. Clients can send |API| commands to the address
-		to control Nvim. Returns the address string.
+		to control Nvim.
+
+		Returns the address string.
 
 		If {address} does not contain a colon ":" it is interpreted as
 		a named pipe or Unix domain socket path.
@@ -6604,14 +6631,11 @@ serverstart([{address}])				*serverstart()*
 		If no address is given, it is equivalent to: >
 			:call serverstart(tempname())
 
-< 		|$NVIM_LISTEN_ADDRESS| is set to {address} if not already set.
-
 serverstop({address})					*serverstop()*
 		Closes the pipe or socket at {address}.
 		Returns TRUE if {address} is valid, else FALSE.
-		If |$NVIM_LISTEN_ADDRESS| is stopped it is unset.
 		If |v:servername| is stopped it is set to the next available
-		address returned by |serverlist()|.
+		address in |serverlist()|.
 
 setbufline({buf}, {lnum}, {text})			*setbufline()*
 		Set line {lnum} to {text} in buffer {buf}.  This works like
@@ -7436,8 +7460,8 @@ sqrt({expr})						*sqrt()*
 			:echo sqrt(100)
 <			10.0 >
 			:echo sqrt(-4.01)
-<			nan
-		"nan" may be different, it depends on system libraries.
+<			str2float('nan')
+		NaN may be different, it depends on system libraries.
 
 		Can also be used as a |method|: >
 			Compute()->sqrt()
@@ -7486,14 +7510,17 @@ stdpath({what})					*stdpath()* *E6100*
 		directories.
 
 		{what}       Type    Description ~
-		cache        String  Cache directory. Arbitrary temporary
+		cache        String  Cache directory: arbitrary temporary
 		                     storage for plugins, etc.
-		config       String  User configuration directory. The
-		                     |init.vim| is stored here.
-		config_dirs  List    Additional configuration directories.
+		config       String  User configuration directory. |init.vim|
+		                     is stored here.
+		config_dirs  List    Other configuration directories.
 		data         String  User data directory. The |shada-file|
 		                     is stored here.
-		data_dirs    List    Additional data directories.
+		data_dirs    List    Other data directories.
+		log          String  Logs directory (for use by plugins too).
+		state        String  Session state directory: storage for file
+				     drafts, undo history, shada, etc.
 
 		Example: >
 			:echo stdpath("config")
@@ -7630,9 +7657,11 @@ strftime({format} [, {time}])				*strftime()*
 			GetFormat()->strftime()
 
 strgetchar({str}, {index})				*strgetchar()*
-		Get character {index} from {str}.  This uses a character
-		index, not a byte index.  Composing characters are considered
-		separate characters here.
+		Get a Number corresponding to the character at {index} in
+		{str}.  This uses a zero-based character index, not a byte
+		index.  Composing characters are considered separate
+		characters here.  Use |nr2char()| to convert the Number to a
+		String.
 		Also see |strcharpart()| and |strchars()|.
 
 		Can also be used as a |method|: >
@@ -8191,19 +8220,15 @@ tempname()					*tempname()* *temp-file-name*
 
 termopen({cmd} [, {opts}])			*termopen()*
 		Spawns {cmd} in a new pseudo-terminal session connected
-		to the current buffer.  {cmd} is the same as the one passed to
-		|jobstart()|.  This function fails if the current buffer is
-		modified (all buffer contents are destroyed).
-
-		The {opts} dict is similar to the one passed to |jobstart()|,
-		but the `pty`, `width`, `height`, and `TERM` fields are
-		ignored: `height`/`width` are taken from the current window
-		and `$TERM` is set to "xterm-256color".
+		to the current (unmodified) buffer. Parameters and behavior
+		are the same as |jobstart()| except "pty", "width", "height",
+		and "TERM" are ignored: "height" and "width" are taken from
+		the current window.
 		Returns the same values as |jobstart()|.
 
-		See |terminal| for more information.
-
-test_ functions are documented here: |test-functions-details|
+		Terminal environment is initialized as in ||jobstart-env|,
+		except $TERM is set to "xterm-256color". Full behavior is
+		described in |terminal|.
 
 tan({expr})						*tan()*
 		Return the tangent of {expr}, measured in radians, as a |Float|
@@ -8817,6 +8842,7 @@ winnr([{arg}])	The result is a Number, which is the number of the current
 				current window (where |CTRL-W_l| goes to).
 		The number can be used with |CTRL-W_w| and ":wincmd w"
 		|:wincmd|.
+		When {arg} is invalid an error is given and zero is returned.
 		Also see |tabpagewinnr()| and |win_getid()|.
 		Examples: >
 			let window_count = winnr('$')

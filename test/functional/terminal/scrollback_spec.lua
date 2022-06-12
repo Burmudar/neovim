@@ -6,6 +6,7 @@ local feed, nvim_dir, feed_command = helpers.feed, helpers.nvim_dir, helpers.fee
 local iswin = helpers.iswin
 local eval = helpers.eval
 local command = helpers.command
+local matches = helpers.matches
 local poke_eventloop = helpers.poke_eventloop
 local retry = helpers.retry
 local curbufmeths = helpers.curbufmeths
@@ -460,8 +461,36 @@ describe("'scrollback' option", function()
     expect_lines(58)
 
     -- Verify off-screen state
-    eq((iswin() and '36: line' or '35: line'), eval("getline(line('w0') - 1)"))
-    eq((iswin() and '27: line' or '26: line'), eval("getline(line('w0') - 10)"))
+    matches((iswin() and '^36: line[ ]*$' or '^35: line[ ]*$'), eval("getline(line('w0') - 1)"))
+    matches((iswin() and '^27: line[ ]*$' or '^26: line[ ]*$'), eval("getline(line('w0') - 10)"))
+  end)
+
+  it('deletes extra lines immediately', function()
+    -- Scrollback is 10 on screen_setup
+    local screen = thelpers.screen_setup(nil, nil, 30)
+    local lines = {}
+    for i = 1, 30 do
+      table.insert(lines, 'line'..tostring(i))
+    end
+    table.insert(lines, '')
+    feed_data(lines)
+      screen:expect([[
+        line26                        |
+        line27                        |
+        line28                        |
+        line29                        |
+        line30                        |
+        {1: }                             |
+        {3:-- TERMINAL --}                |
+      ]])
+    local term_height = 6  -- Actual terminal screen height, not the scrollback
+    -- Initial
+    local scrollback = curbufmeths.get_option('scrollback')
+    eq(scrollback + term_height, eval('line("$")'))
+    -- Reduction
+    scrollback = scrollback - 2
+    curbufmeths.set_option('scrollback', scrollback)
+    eq(scrollback + term_height, eval('line("$")'))
   end)
 
   it('defaults to 10000 in :terminal buffers', function()

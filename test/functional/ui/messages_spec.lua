@@ -12,6 +12,7 @@ local nvim_prog = helpers.nvim_prog
 local iswin = helpers.iswin
 local exc_exec = helpers.exc_exec
 local exec_lua = helpers.exec_lua
+local poke_eventloop = helpers.poke_eventloop
 
 describe('ui/ext_messages', function()
   local screen
@@ -30,6 +31,7 @@ describe('ui/ext_messages', function()
       [7] = {background = Screen.colors.Yellow},
       [8] = {foreground = Screen.colors.Red},
       [9] = {special = Screen.colors.Red, undercurl = true},
+      [10] = {foreground = Screen.colors.Brown};
     })
   end)
   after_each(function()
@@ -303,13 +305,25 @@ describe('ui/ext_messages', function()
       {1:~                        }|
       {1:~                        }|
       {1:~                        }|
-    ]], messages={
+    ]], msg_history={
       {kind="echoerr", content={{"raa", 2}}},
       {kind="echoerr", content={{"bork", 2}}},
       {kind="echoerr", content={{"fail", 2}}},
       {kind="echoerr", content={{"extrafail", 2}}},
       {kind="echoerr", content={{"problem", 2}}}
-    }}
+    }, messages={{
+      content = {{ "Press ENTER or type command to continue", 4 }},
+      kind = "return_prompt"
+    }}}
+
+    feed '<cr>'
+    screen:expect{grid=[[
+      ^                         |
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+    ]]}
   end)
 
   it('shortmess-=S', function()
@@ -454,11 +468,14 @@ describe('ui/ext_messages', function()
       alphpabe^t                |
       {1:~                        }|
       {1:~                        }|
-    ]], messages={
-      {kind="echomsg", content={{"stuff"}}},
-    }, showmode={
-      { "-- INSERT --", 3 }
-    }}
+    ]], msg_history={{
+      content = {{ "stuff" }},
+      kind = "echomsg",
+    }}, showmode={{ "-- INSERT --", 3 }},
+      messages={{
+        content = {{ "Press ENTER or type command to continue", 4}},
+        kind = "return_prompt"
+    }}}
   end)
 
   it('&showmode with macro-recording message', function()
@@ -684,12 +701,15 @@ describe('ui/ext_messages', function()
       {1:~                        }|
       {1:~                        }|
       {1:~                        }|
-    ]], messages={
+    ]], msg_history={
       {kind="echomsg", content={{"howdy"}}},
       {kind="", content={{"Type  :qa  and press <Enter> to exit Nvim"}}},
       {kind="echoerr", content={{"bork", 2}}},
       {kind="emsg", content={{"E117: Unknown function: nosuchfunction", 2}}}
-    }}
+    }, messages={{
+      content = {{ "Press ENTER or type command to continue", 4}},
+      kind = "return_prompt"
+    }}}
   end)
 
   it('implies ext_cmdline and ignores cmdheight', function()
@@ -839,9 +859,53 @@ stack traceback:
       {1:~                        }|
       {1:~                        }|
     ]]}
-
   end)
 
+  it('supports nvim_echo messages with multiple attrs', function()
+    async_meths.echo({{'wow, ',"Search"}, {"such\n\nvery ", "ErrorMsg"}, {"color", "LineNr"}}, true, {})
+    screen:expect{grid=[[
+      ^                         |
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+    ]], messages={
+      { content = { { "wow, ", 7 }, { "such\n\nvery ", 2 }, { "color", 10 } }, kind = "" }
+    }}
+
+    feed ':ls<cr>'
+    screen:expect{grid=[[
+      ^                         |
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+    ]], messages={
+      { content = { { '\n  1 %a   "[No Name]"                    line 1' } }, kind = "echomsg" }
+    }}
+
+    feed ':messages<cr>'
+    screen:expect{grid=[[
+      ^                         |
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+    ]], messages={
+      { content = { { "Press ENTER or type command to continue", 4 } }, kind = "return_prompt" }
+    }, msg_history={
+      { content = { { "wow, ", 7 }, { "such\n\nvery ", 2 }, { "color", 10 } }, kind = "echomsg" }
+    }}
+
+    feed '<cr>'
+    screen:expect{grid=[[
+      ^                         |
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+      {1:~                        }|
+    ]]}
+  end)
 end)
 
 describe('ui/builtin messages', function()
@@ -850,17 +914,19 @@ describe('ui/builtin messages', function()
     clear()
     screen = Screen.new(60, 7)
     screen:attach({rgb=true, ext_popupmenu=true})
-    screen:set_default_attr_ids({
-      [1] = {bold = true, foreground = Screen.colors.Blue1},
-      [2] = {foreground = Screen.colors.Grey100, background = Screen.colors.Red},
-      [3] = {bold = true, reverse = true},
-      [4] = {bold = true, foreground = Screen.colors.SeaGreen4},
-      [5] = {foreground = Screen.colors.Blue1},
-      [6] = {bold = true, foreground = Screen.colors.Magenta},
-      [7] = {background = Screen.colors.Grey20},
-      [8] = {reverse = true},
-      [9] = {background = Screen.colors.LightRed}
-    })
+    screen:set_default_attr_ids  {
+      [1] = {bold = true, foreground = Screen.colors.Blue1};
+      [2] = {foreground = Screen.colors.Grey100, background = Screen.colors.Red};
+      [3] = {bold = true, reverse = true};
+      [4] = {bold = true, foreground = Screen.colors.SeaGreen4};
+      [5] = {foreground = Screen.colors.Blue1};
+      [6] = {bold = true, foreground = Screen.colors.Magenta};
+      [7] = {background = Screen.colors.Grey20};
+      [8] = {reverse = true};
+      [9] = {background = Screen.colors.LightRed};
+      [10] = {background = Screen.colors.Yellow};
+      [11] = {foreground = Screen.colors.Brown};
+    }
   end)
 
   it('supports multiline messages from rpc', function()
@@ -1013,7 +1079,7 @@ vimComment     xxx match /\s"[^\-:.%#=*].*$/ms=s+1,lc=1  excludenl contains=@vim
   end)
 
   it('redraws NOT_VALID correctly after message', function()
-    -- edge case: only one window was set NOT_VALID. Orginal report
+    -- edge case: only one window was set NOT_VALID. Original report
     -- used :make, but fake it using one command to set the current
     -- window NOT_VALID and another to show a long message.
     command("set more")
@@ -1096,6 +1162,41 @@ vimComment     xxx match /\s"[^\-:.%#=*].*$/ms=s+1,lc=1  excludenl contains=@vim
       {4:Press ENTER or type command to continue}^                     |
     ]]}
   end)
+
+  it('supports nvim_echo messages with multiple attrs', function()
+    async_meths.echo({{'wow, ',"Search"}, {"such\n\nvery ", "ErrorMsg"}, {"color", "LineNr"}}, true, {})
+    screen:expect{grid=[[
+                                                                  |
+      {1:~                                                           }|
+      {3:                                                            }|
+      {10:wow, }{2:such}                                                   |
+                                                                  |
+      {2:very }{11:color}                                                  |
+      {4:Press ENTER or type command to continue}^                     |
+    ]]}
+
+    feed '<cr>'
+    screen:expect{grid=[[
+      ^                                                            |
+      {1:~                                                           }|
+      {1:~                                                           }|
+      {1:~                                                           }|
+      {1:~                                                           }|
+      {1:~                                                           }|
+                                                                  |
+    ]]}
+
+    feed ':messages<cr>'
+    screen:expect{grid=[[
+                                                                  |
+      {1:~                                                           }|
+      {3:                                                            }|
+      {10:wow, }{2:such}                                                   |
+                                                                  |
+      {2:very }{11:color}                                                  |
+      {4:Press ENTER or type command to continue}^                     |
+    ]]}
+  end)
 end)
 
 describe('ui/ext_messages', function()
@@ -1111,6 +1212,8 @@ describe('ui/ext_messages', function()
       [3] = {bold = true},
       [4] = {bold = true, foreground = Screen.colors.SeaGreen4},
       [5] = {foreground = Screen.colors.Blue1},
+      [6] = {reverse = true},
+      [7] = {bold = true, reverse = true},
     })
   end)
 
@@ -1202,11 +1305,111 @@ describe('ui/ext_messages', function()
       {content = { { "Press ENTER or type command to continue", 4 } }, kind = "return_prompt" }
     }}
   end)
+
+  it('supports global statusline', function()
+    feed(":set laststatus=3<cr>")
+    feed(":sp<cr>")
+    feed(":set cmdheight<cr>")
+    screen:expect({grid=[[
+      ^                                                                                |
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      ────────────────────────────────────────────────────────────────────────────────|
+                                                                                      |
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {7:[No Name]                                                                       }|
+    ]], messages={
+      {content = { { "  cmdheight=0" } }, kind = "" }
+    }})
+
+    feed("<c-w>+")
+    feed(":set laststatus<cr>")
+    screen:expect({grid=[[
+      ^                                                                                |
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      ────────────────────────────────────────────────────────────────────────────────|
+                                                                                      |
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {7:[No Name]                                                                       }|
+    ]], messages={
+      {content = { { "  laststatus=3" } }, kind = "" }
+    }})
+
+    feed(":set mouse=a<cr>")
+    meths.input_mouse('left', 'press', '', 0, 12, 10)
+    poke_eventloop()
+    meths.input_mouse('left', 'drag', '', 0, 12, 10)
+    meths.input_mouse('left', 'drag', '', 0, 11, 10)
+    feed("<c-l>")
+    feed(":set cmdheight<cr>")
+    screen:expect({grid=[[
+      ^                                                                                |
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      ────────────────────────────────────────────────────────────────────────────────|
+                                                                                      |
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {1:~                                                                               }|
+      {7:[No Name]                                                                       }|
+    ]], messages={
+      {content = { { "  cmdheight=0" } }, kind = "" }
+    }})
+  end)
 end)
 
 describe('ui/msg_puts_printf', function()
   it('output multibyte characters correctly', function()
-    if helpers.pending_win32(pending) then return end
     local screen
     local cmd = ''
     local locale_dir = test_build_dir..'/share/locale/ja/LC_MESSAGES'
@@ -1227,7 +1430,7 @@ describe('ui/msg_puts_printf', function()
         pending('Locale ja_JP.UTF-8 not supported', function() end)
         return
       elseif helpers.isCI() then
-        -- Fails non--Windows CI. Message catalog direcotry issue?
+        -- Fails non--Windows CI. Message catalog directory issue?
         pending('fails on unix CI', function() end)
         return
       end

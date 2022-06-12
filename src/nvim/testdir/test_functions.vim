@@ -1180,6 +1180,45 @@ func Test_col()
   bw!
 endfunc
 
+" Test for input()
+func Test_input_func()
+  " Test for prompt with multiple lines
+  redir => v
+  call feedkeys(":let c = input(\"A\\nB\\nC\\n? \")\<CR>B\<CR>", 'xt')
+  redir END
+  call assert_equal("B", c)
+  call assert_equal(['A', 'B', 'C'], split(v, "\n"))
+
+  " Test for default value
+  call feedkeys(":let c = input('color? ', 'red')\<CR>\<CR>", 'xt')
+  call assert_equal('red', c)
+
+  " Test for completion at the input prompt
+  func! Tcomplete(arglead, cmdline, pos)
+    return "item1\nitem2\nitem3"
+  endfunc
+  call feedkeys(":let c = input('Q? ', '', 'custom,Tcomplete')\<CR>"
+        \ .. "\<C-A>\<CR>", 'xt')
+  delfunc Tcomplete
+  call assert_equal('item1 item2 item3', c)
+
+  " Test for using special characters as default input
+  call feedkeys(":let c = input('name? ', \"x\\<BS>y\")\<CR>\<CR>", 'xt')
+  call assert_equal('y', c)
+
+  " Test for using text with composing characters as default input
+  call feedkeys(":let c = input('name? ', \"ã̳\")\<CR>\<CR>", 'xt')
+  call assert_equal('ã̳', c)
+
+  " Test for using <CR> as default input
+  call feedkeys(":let c = input('name? ', \"\\<CR>\")\<CR>x\<CR>", 'xt')
+  call assert_equal(' x', c)
+
+  call assert_fails("call input('F:', '', 'invalid')", 'E180:')
+  call assert_fails("call input('F:', '', [])", 'E730:')
+endfunc
+
+" Test for inputlist()
 func Test_inputlist()
   call feedkeys(":let c = inputlist(['Select color:', '1. red', '2. green', '3. blue'])\<cr>1\<cr>", 'tx')
   call assert_equal(1, c)
@@ -1662,6 +1701,15 @@ func Test_delete_rf()
   call assert_equal(0, delete('Xdir', 'rf'))
   call assert_false(filereadable('Xdir/foo.txt'))
   call assert_false(filereadable('Xdir/[a-1]/foo.txt'))
+
+  if has('unix')
+    call mkdir('Xdir/Xdir2', 'p')
+    silent !chmod 555 Xdir
+    call assert_equal(-1, delete('Xdir/Xdir2', 'rf'))
+    call assert_equal(-1, delete('Xdir', 'rf'))
+    silent !chmod 755 Xdir
+    call assert_equal(0, delete('Xdir', 'rf'))
+  endif
 endfunc
 
 func Test_call()
@@ -1742,8 +1790,8 @@ func Test_nr2char()
   call assert_equal('a', nr2char(97, 1))
   call assert_equal('a', nr2char(97, 0))
 
-  call assert_equal("\x80\xfc\b\xf4\x80\xfeX\x80\xfeX\x80\xfeX", eval('"\<M-' .. nr2char(0x100000) .. '>"'))
-  call assert_equal("\x80\xfc\b\xfd\x80\xfeX\x80\xfeX\x80\xfeX\x80\xfeX\x80\xfeX", eval('"\<M-' .. nr2char(0x40000000) .. '>"'))
+  call assert_equal("\x80\xfc\b" .. nr2char(0x100000), eval('"\<M-' .. nr2char(0x100000) .. '>"'))
+  call assert_equal("\x80\xfc\b" .. nr2char(0x40000000), eval('"\<M-' .. nr2char(0x40000000) .. '>"'))
 endfunc
 
 " Test for getcurpos() and setpos()

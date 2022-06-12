@@ -119,13 +119,50 @@ describe('autocmd api', function()
 
     describe('desc', function()
       it('can add description to one autocmd', function()
+        local cmd =  "echo 'Should Not Have Errored'"
+        local desc =  "Can show description"
         meths.create_autocmd("BufReadPost", {
           pattern = "*.py",
-          command = "echo 'Should Not Have Errored'",
-          desc = "Can show description",
+          command = cmd,
+          desc = desc,
         })
 
-        eq("Can show description", meths.get_autocmds { event = "BufReadPost" }[1].desc)
+        eq(desc, meths.get_autocmds { event = "BufReadPost" }[1].desc)
+        eq(cmd, meths.get_autocmds { event = "BufReadPost" }[1].command)
+      end)
+
+      it('can add description to one autocmd that uses a callback', function()
+        local desc = 'Can show description'
+        meths.set_var('desc', desc)
+
+        local result = exec_lua([[
+          local callback = function() print 'Should Not Have Errored' end
+          vim.api.nvim_create_autocmd("BufReadPost", {
+            pattern = "*.py",
+            callback = callback,
+            desc = vim.g.desc,
+          })
+          local aus = vim.api.nvim_get_autocmds({ event = 'BufReadPost' })
+          local first = aus[1]
+          return {
+            desc = first.desc,
+            cbtype = type(first.callback)
+          }
+        ]])
+
+        eq({ desc = desc, cbtype = 'function' }, result)
+      end)
+
+      it('will not add a description unless it was provided', function()
+        exec_lua([[
+          local callback = function() print 'Should Not Have Errored' end
+          vim.api.nvim_create_autocmd("BufReadPost", {
+            pattern = "*.py",
+            callback = callback,
+          })
+        ]])
+
+        eq(nil, meths.get_autocmds({ event = 'BufReadPost' })[1].desc)
       end)
 
       it('can add description to multiple autocmd', function()
@@ -169,18 +206,90 @@ describe('autocmd api', function()
       ]]
 
       meths.exec_autocmds("User", {pattern = "Test"})
-      eq({{
-        buflocal = false,
-        command = 'A test autocommand',
-        desc = 'A test autocommand',
-        event = 'User',
-        id = 1,
-        once = false,
-        pattern = 'Test',
-      }}, meths.get_autocmds({event = "User", pattern = "Test"}))
+
+      local aus = meths.get_autocmds({ event = 'User', pattern = 'Test' })
+      local first = aus[1]
+      eq(first.id, 1)
+
       meths.set_var("some_condition", true)
       meths.exec_autocmds("User", {pattern = "Test"})
       eq({}, meths.get_autocmds({event = "User", pattern = "Test"}))
+    end)
+
+    it('receives an args table', function()
+      local res = exec_lua [[
+        local group_id = vim.api.nvim_create_augroup("TestGroup", {})
+        local autocmd_id = vim.api.nvim_create_autocmd("User", {
+          group = "TestGroup",
+          pattern = "Te*",
+          callback = function(args)
+            vim.g.autocmd_args = args
+          end,
+        })
+
+        return {group_id, autocmd_id}
+      ]]
+
+      meths.exec_autocmds("User", {pattern = "Test pattern"})
+      eq({
+        id = res[2],
+        group = res[1],
+        event = "User",
+        match = "Test pattern",
+        file = "Test pattern",
+        buf = 1,
+      }, meths.get_var("autocmd_args"))
+
+      -- Test without a group
+      res = exec_lua [[
+        local autocmd_id = vim.api.nvim_create_autocmd("User", {
+          pattern = "*",
+          callback = function(args)
+            vim.g.autocmd_args = args
+          end,
+        })
+
+        return {autocmd_id}
+      ]]
+
+      meths.exec_autocmds("User", {pattern = "some_pat"})
+      eq({
+        id = res[1],
+        group = nil,
+        event = "User",
+        match = "some_pat",
+        file = "some_pat",
+        buf = 1,
+      }, meths.get_var("autocmd_args"))
+
+    end)
+
+    it('can receive arbitrary data', function()
+      local function test(data)
+        eq(data, exec_lua([[
+          local input = ...
+          local output
+          vim.api.nvim_create_autocmd("User", {
+            pattern = "Test",
+            callback = function(args)
+              output = args.data
+            end,
+          })
+
+          vim.api.nvim_exec_autocmds("User", {
+            pattern = "Test",
+            data = input,
+          })
+
+          return output
+        ]], data))
+      end
+
+      test("Hello")
+      test(42)
+      test(true)
+      test({ "list" })
+      test({ foo = "bar" })
     end)
   end)
 
@@ -361,6 +470,49 @@ describe('autocmd api', function()
         -- 3-7 for the 5 we make in the autocmd
         eq({1, 2, 3, 4, 5, 6, 7}, bufs)
       end)
+
+      it('can retrieve a callback from an autocmd', function()
+        local content = 'I Am A Callback'
+        meths.set_var('content', content)
+
+        local result = exec_lua([[
+          local cb = function() return vim.g.content end
+          vim.api.nvim_create_autocmd("User", {
+            pattern = "TestTrigger",
+            desc = "A test autocommand with a callback",
+            callback = cb,
+          })
+          local aus = vim.api.nvim_get_autocmds({ event = 'User', pattern = 'TestTrigger'})
+          local first = aus[1]
+          return {
+            cb = {
+              type = type(first.callback),
+              can_retrieve = first.callback() == vim.g.content
+            }
+          }
+        ]])
+
+        eq("function", result.cb.type)
+        eq(true, result.cb.can_retrieve)
+      end)
+
+      it('will return an empty string as the command for an autocmd that uses a callback', function()
+        local result = exec_lua([[
+          local callback = function() print 'I Am A Callback' end
+          vim.api.nvim_create_autocmd("BufWritePost", {
+            pattern = "*.py",
+            callback = callback,
+          })
+          local aus = vim.api.nvim_get_autocmds({ event = 'BufWritePost' })
+          local first = aus[1]
+          return {
+            command = first.command,
+            cbtype = type(first.callback)
+          }
+        ]])
+
+        eq({ command = "", cbtype = 'function' }, result)
+      end)
     end)
 
     describe('groups', function()
@@ -396,6 +548,7 @@ describe('autocmd api', function()
 
         eq(1, #aus)
         eq([[:echo "GroupOne:1"]], aus[1].command)
+        eq("GroupOne", aus[1].group_name)
       end)
 
       it('should return only the group specified, multiple values', function()
@@ -406,7 +559,9 @@ describe('autocmd api', function()
 
         eq(2, #aus)
         eq([[:echo "GroupTwo:2"]], aus[1].command)
+        eq("GroupTwo", aus[1].group_name)
         eq([[:echo "GroupTwo:3"]], aus[2].command)
+        eq("GroupTwo", aus[2].group_name)
       end)
     end)
 
@@ -679,7 +834,7 @@ describe('autocmd api', function()
       set_ft("txt")
       set_ft("python")
 
-      eq(get_executed_count(), 2)
+      eq(2, get_executed_count())
     end)
 
     it('works getting called multiple times', function()
@@ -688,7 +843,7 @@ describe('autocmd api', function()
       set_ft()
       set_ft()
 
-      eq(get_executed_count(), 3)
+      eq(3, get_executed_count())
     end)
 
     it('handles ++once', function()
@@ -698,7 +853,7 @@ describe('autocmd api', function()
       set_ft('txt')
       set_ft('help')
 
-      eq(get_executed_count(), 1)
+      eq(1, get_executed_count())
     end)
 
     it('errors on unexpected keys', function()
@@ -826,7 +981,7 @@ describe('autocmd api', function()
       set_ft("txt")
       set_ft("python")
 
-      eq(get_executed_count(), 1)
+      eq(1, get_executed_count())
     end)
 
     it('autocmds can be registered multiple times.', function()
@@ -840,7 +995,7 @@ describe('autocmd api', function()
       set_ft("txt")
       set_ft("python")
 
-      eq(get_executed_count(), 3 * 2)
+      eq(3 * 2, get_executed_count())
     end)
 
     it('can be deleted', function()

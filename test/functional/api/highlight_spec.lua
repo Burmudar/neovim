@@ -251,7 +251,7 @@ describe("API: set highlight", function()
     eq(highlight2_result, meths.get_hl_by_name('Test_hl', false))
   end)
 
-  it ("can set emtpy cterm attr", function()
+  it ("can set empty cterm attr", function()
     local ns = get_ns()
     meths.set_hl(ns, 'Test_hl', { cterm = {} })
     eq({}, meths.get_hl_by_name('Test_hl', false))
@@ -336,5 +336,11 @@ describe("API: set highlight", function()
     eq('Test_hl3       xxx guifg=#FF00FF blend=50',
       exec_capture('highlight Test_hl3'))
 
+  end)
+
+  it ("correctly sets 'Normal' internal properties", function()
+    -- Normal has some special handling internally. #18024
+    meths.set_hl(0, 'Normal', {fg='#000083', bg='#0000F3'})
+    eq({foreground = 131, background = 243}, nvim("get_hl_by_name", 'Normal', true))
   end)
 end)

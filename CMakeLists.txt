@@ -139,12 +139,12 @@ set_property(CACHE CMAKE_BUILD_TYPE PROPERTY
 # If not in a git repo (e.g., a tarball) these tokens define the complete
 # version string, else they are combined with the result of `git describe`.
 set(NVIM_VERSION_MAJOR 0)
-set(NVIM_VERSION_MINOR 7)
+set(NVIM_VERSION_MINOR 8)
 set(NVIM_VERSION_PATCH 0)
 set(NVIM_VERSION_PRERELEASE "-dev") # for package maintainers
 
 # API level
-set(NVIM_API_LEVEL 9)         # Bump this after any API change.
+set(NVIM_API_LEVEL 10)         # Bump this after any API change.
 set(NVIM_API_LEVEL_COMPAT 0)  # Adjust this after a _breaking_ API change.
 set(NVIM_API_PRERELEASE true)
 
@@ -370,7 +370,7 @@ option(CI_BUILD "CI, extra flags will be set" OFF)
 if(CI_BUILD)
   message(STATUS "CI build enabled")
   add_compile_options(-Werror)
-  if(DEFINED ENV{BUILD_32BIT})
+  if(DEFINED ENV{BUILD_UCHAR})
     # Get some test coverage for unsigned char
     add_compile_options(-funsigned-char)
   endif()
@@ -453,7 +453,7 @@ endif()
 option(PREFER_LUA "Prefer Lua over LuaJIT in the nvim executable." OFF)
 
 if(PREFER_LUA)
-  find_package(Lua 5.1 REQUIRED)
+  find_package(Lua 5.1 EXACT REQUIRED)
   set(LUA_PREFERRED_INCLUDE_DIRS ${LUA_INCLUDE_DIR})
   set(LUA_PREFERRED_LIBRARIES ${LUA_LIBRARIES})
   # Passive (not REQUIRED): if LUAJIT_FOUND is not set, nvim-test is skipped.
@@ -508,11 +508,6 @@ endif()
 
 find_package(LIBVTERM 0.1 REQUIRED)
 include_directories(SYSTEM ${LIBVTERM_INCLUDE_DIRS})
-
-if(WIN32)
-  find_package(Winpty 0.4.3 REQUIRED)
-  include_directories(SYSTEM ${WINPTY_INCLUDE_DIRS})
-endif()
 
 option(CLANG_ASAN_UBSAN "Enable Clang address & undefined behavior sanitizer for nvim binary." OFF)
 option(CLANG_MSAN "Enable Clang memory sanitizer for nvim binary." OFF)
@@ -616,10 +611,6 @@ find_program(BUSTED_LUA_PRG busted-lua)
 if(NOT BUSTED_OUTPUT_TYPE)
   set(BUSTED_OUTPUT_TYPE "nvim")
 endif()
-
-find_program(LUACHECK_PRG luacheck)
-find_program(FLAKE8_PRG flake8)
-find_program(GPERF_PRG gperf)
 
 include(InstallHelpers)
 
@@ -754,15 +745,13 @@ if(BUSTED_LUA_PRG)
     set_target_properties(functionaltest-lua PROPERTIES FOLDER test)
 endif()
 
-if(LUACHECK_PRG)
-  add_custom_target(lualint
-    COMMAND ${LUACHECK_PRG} -q runtime/ scripts/ src/ test/
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-else()
-  add_custom_target(lualint false
-    COMMENT "lualint: LUACHECK_PRG not defined")
-endif()
-
+foreach(TARGET IN ITEMS lintlua lintsh lintpy lintuncrustify)
+  add_custom_target(${TARGET}
+    COMMAND ${CMAKE_COMMAND}
+    -DPROJECT_ROOT=${PROJECT_SOURCE_DIR}
+    -DTARGET=${TARGET}
+    -P ${PROJECT_SOURCE_DIR}/cmake/lint.cmake)
+endforeach()
 
 #add uninstall target
 if(NOT TARGET uninstall)
